@@ -6,14 +6,8 @@
 #include "configfile.h" 
 
 // Ruleset constants
-/*
 #define RS_TABLE_NAME "proxy_table"
 #define RS_SERVER_CHAIN_NAME "server_chain"
-#define RS_CLIENT_CHAIN_NAME "client_chain"
-*/
-
-#define RS_TABLE_NAME "test_table"
-#define RS_SERVER_CHAIN_NAME "test_chain"
 #define RS_CLIENT_CHAIN_NAME "client_chain"
 
 int rs_init_table(struct nft_ctx *);
