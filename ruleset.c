@@ -106,7 +106,7 @@ int rs_make_server_chain(struct nft_ctx *nft, Connection *conn) {
     // Make chain
     result = nft_run_cmd_from_buffer(nft,
         "add chain inet " RS_TABLE_NAME " "
-        " " RS_CLIENT_CHAIN_NAME " "
+        " " RS_SERVER_CHAIN_NAME " "
         "{ type nat hook postrouting priority mangle; policy accept; }");
     if (result != 0) return -1;
 
