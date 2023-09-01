@@ -115,8 +115,14 @@ void rdr_copy_fd(int fd_zero, int fd_one) {
 			return;
 		}
 
-		if (fds[0].revents & POLLHUP) return;
-		if (fds[1].revents & POLLHUP) return;
+		if (fds[0].revents & POLLHUP) {
+            fputs("fd 0 hangup\n", stderr);
+            return;
+        }
+		if (fds[1].revents & POLLHUP) {
+            fputs("fd 1 hangup\n", stderr);
+            return;
+        }
 
 		if (fds[0].revents & POLLIN) {
 			readfd = fds[0].fd;
@@ -182,7 +188,6 @@ int rdr_redirect(Connection *conn, ConnectionRole role) {
     }
 
     // Connection to remote server
-    
     port_remote = (role == ROLE_CLIENT) ? htons(4321) : conn->serv_port;
     sock_remote = rdr_connect(conn->serv, port_remote);
     if (sock_remote < 0) {
