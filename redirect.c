@@ -1,3 +1,5 @@
+#define _GNU_SOURCE // for poll.h, MUST come before ALL includes 
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +91,19 @@ size_t rdr_do_write(const int fd, char *buf, const size_t len) {
 	return offset;
 }
 
+/* Returns 0 on success, -1 on failure */
+int bytes_acked(int sock, long long unsigned int *nbytes) {
+    struct tcp_info info;
+    socklen_t info_size = sizeof(struct tcp_info);
+
+    if (getsockopt(sock, 6, TCP_INFO, &info, &info_size) != 0) {
+        perror("getsockopt failed");
+        return -1;
+    }
+
+    *nbytes = info.tcpi_bytes_acked;
+    return 0;
+}
 
 // from tcprdr
 void rdr_copy_fd(int fd_zero, int fd_one) {
@@ -112,18 +127,52 @@ void rdr_copy_fd(int fd_zero, int fd_one) {
 		case 0:
 			/* should not happen, we requested infinite wait */
 			fputs("Timed out?!", stderr);
-			return;
+			break;
 		}
 
+        // Handle events:
+
+        // Event: hangup
 		if (fds[0].revents & POLLHUP) {
-            fputs("fd 0 hangup\n", stderr);
-            return;
+            fputs("fd 0 POLLHUP\n", stderr);
+            break;
         }
 		if (fds[1].revents & POLLHUP) {
-            fputs("fd 1 hangup\n", stderr);
-            return;
+            fputs("fd 1 POLLHUP\n", stderr);
+            break;
         }
 
+        // Event: exceptional condition
+		if (fds[0].revents & POLLPRI) {
+            fputs("fd 0 POLLPRI\n", stderr);
+            break;
+        }
+		if (fds[1].revents & POLLPRI) {
+            fputs("fd 1 POLLPRI\n", stderr);
+            break;
+        }
+
+        // Event: peer closed connection
+		if (fds[0].revents & POLLRDHUP) {
+            fputs("fd 0 POLLRDHUP\n", stderr);
+            break;
+        }
+		if (fds[1].revents & POLLRDHUP) {
+            fputs("fd 1 POLLRDHUP\n", stderr);
+            break;
+        }
+
+        // Event: fd not open
+		if (fds[0].revents & POLLNVAL) {
+            fputs("fd 0 POLLNVAL\n", stderr);
+            break;
+        }
+		if (fds[1].revents & POLLNVAL) {
+            fputs("fd 1 POLLNVAL\n", stderr);
+            break;
+        }
+
+        // Event: data to read
 		if (fds[0].revents & POLLIN) {
 			readfd = fds[0].fd;
 			writefd = fds[1].fd;
@@ -137,20 +186,24 @@ void rdr_copy_fd(int fd_zero, int fd_one) {
 			ssize_t len;
 
 			len = read(readfd, buf, sizeof buf);
-			if (!len) return;
+			if (!len) {
+                fputs("read len == 0\n", stderr);
+                break;
+            }
 			if (len < 0) {
 				if (errno == EINTR)
 					continue;
 
 				perror("read");
-				return;
+				break;
 			}
-			if (!rdr_do_write(writefd, buf, len)) return;
+			if (!rdr_do_write(writefd, buf, len)) break;
 		} else {
 			/* Should not happen,  at least one fd must have POLLHUP and/or POLLIN set */
 			fputs("Warning: no useful poll() event", stderr);
 		}
-	}
+	} // end for loop
+    fprintf(stderr, "Leaving rdr_copy_fd\n");
 }
 
 /*
@@ -173,6 +226,7 @@ int rdr_redirect(Connection *conn, ConnectionRole role) {
     struct sockaddr_in clnt_addr;
     socklen_t addrlen = sizeof(struct sockaddr_in);
     in_port_t port_remote;
+    long long unsigned int n_transmitted;
 
     // Listen on local server socket
     sock_listen = rdr_listen(htons(4321)); // TODO: make 4321 a constant
@@ -196,9 +250,14 @@ int rdr_redirect(Connection *conn, ConnectionRole role) {
 
     // Loop, copying from one to the other
     rdr_copy_fd(sock_local, sock_remote);
+    if (bytes_acked(sock_remote, &n_transmitted) == 0) {
+        fprintf(stderr, "bytes_acked: %llu\n", n_transmitted);
+    }
 
     // Clean up
+    // FIXME: don't close local connection (continue buffering contents)
     close(sock_remote);
     close(sock_local);
+    close(sock_listen);
     return 0;
 }
