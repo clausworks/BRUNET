@@ -74,6 +74,7 @@ int rdr_connect(struct in_addr ip_n, in_port_t port_n) {
 }
 
 // from tcprdr
+// Returns number of bytes written
 size_t rdr_do_write(const int fd, char *buf, const size_t len) {
 	size_t offset = 0;
 
@@ -84,7 +85,6 @@ size_t rdr_do_write(const int fd, char *buf, const size_t len) {
 			perror("write");
 			return 0;
 		}
-
 		written = (size_t) bw;
 		offset += written;
 	}
@@ -106,11 +106,22 @@ int bytes_acked(int sock, long long unsigned int *nbytes) {
 }
 
 // from tcprdr
-void rdr_copy_fd(int fd_zero, int fd_one) {
+/* A symmetric copy between two file descriptors. Waits for data to read from
+ * one and writes it to the other. Returns when a connection closes or an error
+ * occurs.
+ *
+ * fd_local: the fd for the connection to the user program on the local host
+ * fd_remote: the fd for the proxy program on the peer host
+ * Note - fd_local should not equal fd_remote
+ *
+ * Returns 0 if local connection ended, 1 if remote connection ended
+ * Returns -1 on error
+ */
+int rdr_copy_fd(int fd_local, int fd_remote) {
 	struct pollfd fds[] = { { .events = POLLIN }, { .events = POLLIN }};
 
-	fds[0].fd = fd_zero;
-	fds[1].fd = fd_one;
+	fds[0].fd = fd_local;
+	fds[1].fd = fd_remote;
 
 	for (;;) {
 		int readfd, writefd;
@@ -123,53 +134,55 @@ void rdr_copy_fd(int fd_zero, int fd_one) {
 			if (errno == EINTR)
 				continue;
 			perror("poll");
-			return;
+			return -1;
 		case 0:
 			/* should not happen, we requested infinite wait */
 			fputs("Timed out?!", stderr);
-			break;
+            return -1;
 		}
 
         // Handle events:
+        
+        // TODO: perform handling separately for local/remote
 
         // Event: hangup
 		if (fds[0].revents & POLLHUP) {
             fputs("fd 0 POLLHUP\n", stderr);
-            break;
+            return 0;
         }
 		if (fds[1].revents & POLLHUP) {
             fputs("fd 1 POLLHUP\n", stderr);
-            break;
+            return 1;
         }
 
         // Event: exceptional condition
 		if (fds[0].revents & POLLPRI) {
             fputs("fd 0 POLLPRI\n", stderr);
-            break;
+            return -1;
         }
 		if (fds[1].revents & POLLPRI) {
             fputs("fd 1 POLLPRI\n", stderr);
-            break;
+            return -1;
         }
 
         // Event: peer closed connection
 		if (fds[0].revents & POLLRDHUP) {
             fputs("fd 0 POLLRDHUP\n", stderr);
-            break;
+            return -1;
         }
 		if (fds[1].revents & POLLRDHUP) {
             fputs("fd 1 POLLRDHUP\n", stderr);
-            break;
+            return -1;
         }
 
         // Event: fd not open
 		if (fds[0].revents & POLLNVAL) {
             fputs("fd 0 POLLNVAL\n", stderr);
-            break;
+            return -1;
         }
 		if (fds[1].revents & POLLNVAL) {
             fputs("fd 1 POLLNVAL\n", stderr);
-            break;
+            return -1;
         }
 
         // Event: data to read
@@ -186,24 +199,28 @@ void rdr_copy_fd(int fd_zero, int fd_one) {
 			ssize_t len;
 
 			len = read(readfd, buf, sizeof buf);
-			if (!len) {
-                fputs("read len == 0\n", stderr);
-                break;
+			if (len == 0) {
+                // EOF -- a connection was shut down
+                return (readfd == fd_local) ? 0 : 1;
             }
 			if (len < 0) {
 				if (errno == EINTR)
 					continue;
 
 				perror("read");
-				break;
+                return -1;
 			}
-			if (!rdr_do_write(writefd, buf, len)) break;
+			if (0 == rdr_do_write(writefd, buf, len)) {
+                // Couldn't write, connection closed 
+                return (writefd == fd_local) ? 0 : 1;
+            }
 		} else {
 			/* Should not happen,  at least one fd must have POLLHUP and/or POLLIN set */
 			fputs("Warning: no useful poll() event", stderr);
 		}
 	} // end for loop
     fprintf(stderr, "Leaving rdr_copy_fd\n");
+    return -1;
 }
 
 /*
@@ -222,42 +239,75 @@ B) Proxy program on 10.0.0.2 [ROLE_SERVER]
 */
 
 int rdr_redirect(Connection *conn, ConnectionRole role) {
-    int sock_listen, sock_local, sock_remote;
-    struct sockaddr_in clnt_addr;
+    int sock_listen; // listening socket
+    //int sock_accept; // to real client (ROLE_CLIENT); to remote proxy (ROLE_SERVER)
+    //int sock_connect; // to remote proxy (ROLE_CLIENT); to real server (ROLE_SERVER)
+    int sock;
+    int sock_local, sock_remote; // aliases to either of sock_accept/sock_connect above
+    in_port_t port; // port used by connect(2)
+    struct sockaddr_in peer_addr;
     socklen_t addrlen = sizeof(struct sockaddr_in);
-    in_port_t port_remote;
     long long unsigned int n_transmitted;
+    int status;
 
     // Listen on local server socket
+    // FIXME: for multiple clients, we only do this once (?)
     sock_listen = rdr_listen(htons(4321)); // TODO: make 4321 a constant
     if (sock_listen < 0) {
         return -1;
     }
 
     // Accept
-    sock_local = accept(sock_listen, (struct sockaddr *)(&clnt_addr), &addrlen);
-    if (sock_local < 0) {
+    // TODO: loop? Handle any spurious errors from accept? 
+    sock = accept(sock_listen, (struct sockaddr *)(&peer_addr), &addrlen);
+    if (sock < 0) {
         perror("accept");
         return -1;
     }
+    if (role == ROLE_CLIENT)
+        sock_local = sock; // real client program
+    else
+        sock_remote = sock; // other proxy program
 
-    // Connection to remote server
-    port_remote = (role == ROLE_CLIENT) ? htons(4321) : conn->serv_port;
-    sock_remote = rdr_connect(conn->serv, port_remote);
-    if (sock_remote < 0) {
+    // Connection to server
+    port = (role == ROLE_CLIENT) ? htons(4321) : conn->serv_port;
+    sock = rdr_connect(conn->serv, port);
+    if (sock < 0) {
+        return -1;
+    }
+    if (role == ROLE_CLIENT)
+        sock_remote = sock;
+    else
+        sock_local = sock;
+
+    // Loop, copying from one to the other
+    status = rdr_copy_fd(sock_local, sock_remote);
+    switch (status) {
+    case 0: // local socket closed
+        fprintf(stderr, "shutting remote+local down\n");
+        close(sock_local);
+        // TODO: send OOB data here...
+        close(sock_remote);
+        break;
+    case 1: // remote socket closed
+        printf("[PLACEHOLDER] begin caching...\n");
+        if (bytes_acked(sock_remote, &n_transmitted) == 0) {
+            fprintf(stderr, "bytes_acked: %llu\n", n_transmitted);
+        }
+        close(sock_remote); // ?
+        break;
+    default: // error
+        fprintf(stderr, "Error from rdr_copy_fd\n");
         return -1;
     }
 
-    // Loop, copying from one to the other
-    rdr_copy_fd(sock_local, sock_remote);
-    if (bytes_acked(sock_remote, &n_transmitted) == 0) {
-        fprintf(stderr, "bytes_acked: %llu\n", n_transmitted);
-    }
-
-    // Clean up
-    // FIXME: don't close local connection (continue buffering contents)
-    close(sock_remote);
-    close(sock_local);
+    fprintf(stderr, "Exiting rdr_redirect\n");
+    // FIXME: for multiple clients, we probably don't want to close listen socket
     close(sock_listen);
     return 0;
 }
+
+// OOB DATA
+// - Enable OOB w/ fctnl (APUE p. 626)
+// - Handle POLLPRI
+// - Read OOB data with 
