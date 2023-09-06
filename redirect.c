@@ -181,7 +181,7 @@ void rdr_copy_fd(int fd_zero, int fd_one) {
 			writefd = fds[0].fd;
 		}
 
-		if (readfd>=0 && writefd >= 0) {
+		if (readfd >=0 && writefd >= 0) {
 			char buf[4096];
 			ssize_t len;
 

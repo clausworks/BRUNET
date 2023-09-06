@@ -29,15 +29,27 @@ char *ntoa_copy_alloc(struct in_addr addr) {
 /* Set netfilter rules.
  */
 
+
+
 int rs_init_table(struct nft_ctx *nft) {
     int result;
 
-    // FIXME: don't flush, just delete appropriate table
-    result = nft_run_cmd_from_buffer(nft, "flush ruleset");
+    //printf("init: BEFORE ---------------------\n");
+    //nft_run_cmd_from_buffer(nft, "list ruleset");
+
+    // `add` makes a new table, if none exists
+    result = nft_run_cmd_from_buffer(nft, "add table ip " RS_TABLE_NAME);
     if (result != 0) return -1;
 
-    result = nft_run_cmd_from_buffer(nft, "add table inet " RS_TABLE_NAME);
+    //printf("init: IN BETWEEN ---------------------\n");
+    //nft_run_cmd_from_buffer(nft, "list ruleset");
+
+    // `flush` removes any rules (necessary if table already existed)
+    result = nft_run_cmd_from_buffer(nft, "flush table ip " RS_TABLE_NAME);
     if (result != 0) return -1;
+
+    //printf("init: AFTER ---------------------\n");
+    //nft_run_cmd_from_buffer(nft, "list ruleset");
 
     return 0;
 }
@@ -58,7 +70,7 @@ int rs_make_client_chain(struct nft_ctx *nft, Connection *conn) {
 
     // Make chain
     result = nft_run_cmd_from_buffer(nft,
-        "add chain inet " RS_TABLE_NAME " "
+        "add chain ip " RS_TABLE_NAME
         " " RS_CLIENT_CHAIN_NAME " "
         "{ type nat hook output priority mangle; policy accept; }");
     if (result != 0) return -1;
@@ -66,18 +78,18 @@ int rs_make_client_chain(struct nft_ctx *nft, Connection *conn) {
     // Convert IP addresses to strings
     if (NULL == inet_ntop(AF_INET, &(conn->clnt),
             this_str, INET_ADDRSTRLEN)) {
-        perror("inet_pton");
+        perror("inet_ntop");
         return -1;
     }
     if (NULL == inet_ntop(AF_INET, &(conn->serv),
             other_str, INET_ADDRSTRLEN)) {
-        perror("inet_pton");
+        perror("inet_ntop");
         return -1;
     }
 
     // Allocate and initialize command buffer for rule
     asprintf(&cmdbuf, 
-        "add rule inet " RS_TABLE_NAME " " RS_CLIENT_CHAIN_NAME " "
+        "add rule ip " RS_TABLE_NAME " " RS_CLIENT_CHAIN_NAME " "
         "ip daddr %s ip saddr %s tcp dport %hu dnat ip to %s:%hu",
         other_str,
         this_str,
@@ -105,7 +117,7 @@ int rs_make_server_chain(struct nft_ctx *nft, Connection *conn) {
 
     // Make chain
     result = nft_run_cmd_from_buffer(nft,
-        "add chain inet " RS_TABLE_NAME " "
+        "add chain ip " RS_TABLE_NAME " "
         " " RS_SERVER_CHAIN_NAME " "
         "{ type nat hook postrouting priority mangle; policy accept; }");
     if (result != 0) return -1;
@@ -113,18 +125,18 @@ int rs_make_server_chain(struct nft_ctx *nft, Connection *conn) {
     // Convert IP addresses to strings
     if (NULL == inet_ntop(AF_INET, &(conn->serv),
             this_str, INET_ADDRSTRLEN)) {
-        perror("inet_pton");
+        perror("inet_ntop");
         return -1;
     }
     if (NULL == inet_ntop(AF_INET, &(conn->clnt),
             other_str, INET_ADDRSTRLEN)) {
-        perror("inet_pton");
+        perror("inet_ntop");
         return -1;
     }
 
     // Allocate and initialize command buffer for rule
     asprintf(&cmdbuf, 
-        "add rule inet " RS_TABLE_NAME " " RS_SERVER_CHAIN_NAME " "
+        "add rule ip " RS_TABLE_NAME " " RS_SERVER_CHAIN_NAME " "
         "ip daddr %s ip saddr %s tcp dport %hu snat ip to %s",
         this_str,
         this_str,
@@ -138,7 +150,8 @@ int rs_make_server_chain(struct nft_ctx *nft, Connection *conn) {
     return 0;
 }
 
-int apply_ruleset_from_config(ConfigFileParams *params) {
+// Returns a pointer to be passed to rs_cleanup. Returns NULL on error.
+int rs_apply(ConfigFileParams *params) {
     struct nft_ctx *nft;
     int result;
 
@@ -147,7 +160,9 @@ int apply_ruleset_from_config(ConfigFileParams *params) {
 
     rs_init_table(nft);
 
-    // TODO: iterate through connections
+    // Make a rule for each connection
+    // FIXME: make sure we're not re-making the chains for multiple
+    // servers/clients
     for (int i = 0; i < params->n_conn; ++i) {
 
         // This device is a client, server, or neither in the connection
@@ -162,6 +177,27 @@ int apply_ruleset_from_config(ConfigFileParams *params) {
     
     result = nft_run_cmd_from_buffer(nft, "list ruleset");
     if (result != 0) return -1;
+
+    nft_ctx_free(nft);
+
+    return 0;
+}
+
+int rs_cleanup() {
+    struct nft_ctx *nft;
+    int result;
+
+    nft = nft_ctx_new(NFT_CTX_DEFAULT);
+    if (nft == NULL) return -1;
+
+    printf("cleanup: BEFORE ---------------------\n");
+    nft_run_cmd_from_buffer(nft, "list ruleset");
+
+    result = nft_run_cmd_from_buffer(nft, "delete table ip " RS_TABLE_NAME);
+    if (result != 0) return -1;
+
+    printf("cleanup: AFTER ---------------------\n");
+    nft_run_cmd_from_buffer(nft, "list ruleset");
 
     nft_ctx_free(nft);
 
