@@ -153,7 +153,7 @@ int rs_make_server_chain(struct nft_ctx *nft, Connection *conn) {
 // Returns a pointer to be passed to rs_cleanup. Returns NULL on error.
 int rs_apply(ConfigFileParams *params) {
     struct nft_ctx *nft;
-    int result;
+    //int result;
 
     nft = nft_ctx_new(NFT_CTX_DEFAULT);
     if (nft == NULL) return -1;
@@ -175,8 +175,8 @@ int rs_apply(ConfigFileParams *params) {
     
     }
     
-    result = nft_run_cmd_from_buffer(nft, "list ruleset");
-    if (result != 0) return -1;
+    //result = nft_run_cmd_from_buffer(nft, "list ruleset");
+    //if (result != 0) return -1;
 
     nft_ctx_free(nft);
 
@@ -190,14 +190,15 @@ int rs_cleanup() {
     nft = nft_ctx_new(NFT_CTX_DEFAULT);
     if (nft == NULL) return -1;
 
-    printf("cleanup: BEFORE ---------------------\n");
-    nft_run_cmd_from_buffer(nft, "list ruleset");
+    //printf("cleanup: BEFORE ---------------------\n");
+    //nft_run_cmd_from_buffer(nft, "list ruleset");
 
     result = nft_run_cmd_from_buffer(nft, "delete table ip " RS_TABLE_NAME);
     if (result != 0) return -1;
 
-    printf("cleanup: AFTER ---------------------\n");
-    nft_run_cmd_from_buffer(nft, "list ruleset");
+    //printf("cleanup: AFTER ---------------------\n");
+    //nft_run_cmd_from_buffer(nft, "list ruleset");
+    printf("cleanup");
 
     nft_ctx_free(nft);
 

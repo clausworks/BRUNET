@@ -268,16 +268,14 @@ int rdr_redirect_clientside(Connection *conn) {
     socklen_t addrlen = sizeof(struct sockaddr_in);
     long long unsigned int n_transmitted;
     int status;
-    char oob_byte = 255;
+    //char oob_byte = 255;
 
-    // Listen on local server socket
     // FIXME: for multiple clients, we only do this once (?)
     sock_listen = rdr_listen(htons(4321), OOB_DISABLE); // TODO: make 4321 a constant
     if (sock_listen < 0) {
         return -1;
     }
 
-    // Accept
     // TODO: loop? Handle any spurious errors from accept? 
     sock_local = accept(sock_listen, (struct sockaddr *)(&peer_addr), &addrlen);
     if (sock_local < 0) {
@@ -285,7 +283,6 @@ int rdr_redirect_clientside(Connection *conn) {
         return -1;
     }
 
-    // Connection to server
     port = htons(4321);
     sock_remote = rdr_connect(conn->serv, port, OOB_ENABLE);
     if (sock_remote < 0) {
@@ -300,8 +297,8 @@ int rdr_redirect_clientside(Connection *conn) {
     case 0: // local socket closed
         fprintf(stderr, "shutting remote+local down\n");
         close(sock_local);
-        send(sock_remote, &oob_byte, 1, MSG_OOB);
-        fprintf(stderr, "Sent OOB byte\n");
+        //send(sock_remote, &oob_byte, 1, MSG_OOB);
+        //fprintf(stderr, "Sent OOB byte\n");
         close(sock_remote);
         fprintf(stderr, "Closed sock_remote\n");
         break;
@@ -331,14 +328,12 @@ int rdr_redirect_serverside(Connection *conn) {
     long long unsigned int n_transmitted;
     int status;
 
-    // Listen on local server socket
     // FIXME: for multiple clients, we only do this once (?)
     sock_listen = rdr_listen(htons(4321), OOB_ENABLE); // TODO: make 4321 a constant
     if (sock_listen < 0) {
         return -1;
     }
 
-    // Accept
     // TODO: loop? Handle any spurious errors from accept? 
     sock_remote = accept(sock_listen, (struct sockaddr *)(&peer_addr), &addrlen);
     if (sock_remote < 0) {
@@ -346,7 +341,6 @@ int rdr_redirect_serverside(Connection *conn) {
         return -1;
     }
 
-    // Connection to server
     port = conn->serv_port;
     sock_local = rdr_connect(conn->serv, port, OOB_DISABLE);
     if (sock_local < 0) {
