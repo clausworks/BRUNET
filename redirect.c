@@ -128,8 +128,7 @@ int bytes_acked(int sock, long long unsigned int *nbytes) {
  * Returns -1 on error
  */
 int rdr_copy_fd(int fd_local, int fd_remote) {
-	struct pollfd fds[] = { { .events = POLLIN | POLLRDHUP }, { .events = POLLIN | POLLPRI |
-    POLLRDHUP }};
+	struct pollfd fds[] = { { .events = POLLIN }, { .events = POLLIN | POLLPRI }};
 
 	fds[0].fd = fd_local;
 	fds[1].fd = fd_remote;
