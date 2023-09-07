@@ -128,7 +128,7 @@ int bytes_acked(int sock, long long unsigned int *nbytes) {
  * Returns -1 on error
  */
 int rdr_copy_fd(int fd_local, int fd_remote) {
-	struct pollfd fds[] = { { .events = POLLIN }, { .events = POLLIN | POLLPRI }};
+	struct pollfd fds[] = {{ .events = POLLIN }, { .events = POLLIN | POLLPRI }};
 
 	fds[0].fd = fd_local;
 	fds[1].fd = fd_remote;
@@ -176,6 +176,7 @@ int rdr_copy_fd(int fd_local, int fd_remote) {
             return -1;
         }
 
+        /*
         // Event: peer closed connection
 		if (fds[0].revents & POLLRDHUP) {
             fputs("fd 0 POLLRDHUP\n", stderr);
@@ -185,6 +186,7 @@ int rdr_copy_fd(int fd_local, int fd_remote) {
             fputs("fd 1 POLLRDHUP\n", stderr);
             return -1;
         }
+        */
 
         // Event: fd not open
 		if (fds[0].revents & POLLNVAL) {
@@ -267,7 +269,7 @@ int rdr_redirect_clientside(Connection *conn) {
     socklen_t addrlen = sizeof(struct sockaddr_in);
     long long unsigned int n_transmitted;
     int status;
-    //char oob_byte = 255;
+    char oob_byte = 255;
 
     // FIXME: for multiple clients, we only do this once (?)
     sock_listen = rdr_listen(htons(4321), OOB_DISABLE); // TODO: make 4321 a constant
@@ -296,8 +298,8 @@ int rdr_redirect_clientside(Connection *conn) {
     case 0: // local socket closed
         fprintf(stderr, "shutting remote+local down\n");
         close(sock_local);
-        //send(sock_remote, &oob_byte, 1, MSG_OOB);
-        //fprintf(stderr, "Sent OOB byte\n");
+        send(sock_remote, &oob_byte, 1, MSG_OOB);
+        fprintf(stderr, "Sent OOB byte\n");
         close(sock_remote);
         fprintf(stderr, "Closed sock_remote\n");
         break;
@@ -326,6 +328,7 @@ int rdr_redirect_serverside(Connection *conn) {
     socklen_t addrlen = sizeof(struct sockaddr_in);
     long long unsigned int n_transmitted;
     int status;
+    char oob_byte = 255;
 
     // FIXME: for multiple clients, we only do this once (?)
     sock_listen = rdr_listen(htons(4321), OOB_ENABLE); // TODO: make 4321 a constant
@@ -354,7 +357,8 @@ int rdr_redirect_serverside(Connection *conn) {
     case 0: // local socket closed
         fprintf(stderr, "shutting remote+local down\n");
         close(sock_local);
-        // TODO: send OOB data here...
+        send(sock_remote, &oob_byte, 1, MSG_OOB);
+        fprintf(stderr, "Sent OOB byte\n");
         close(sock_remote);
         break;
     case 1: // remote socket closed
