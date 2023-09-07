@@ -20,10 +20,16 @@
 int rdr_listen(in_port_t port_n, OutOfBandStatus oob) {
     int sock;
     struct sockaddr_in serv_addr;
+    int one = 1;
 
     /* create socket to listen on */
     if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
         perror("socket");
+        return -1;
+    }
+
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
+        perror("setsockopt");
         return -1;
     }
 
