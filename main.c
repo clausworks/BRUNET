@@ -20,6 +20,7 @@ void init_sighandlers() {
         perror("sigemptyset");
         exit(EXIT_FAILURE);
     }
+    //TODO: add SIGTERM
     if (0 != sigaddset(&(sa.sa_mask), SIGINT)) {
         perror("sigaddset");
         exit(EXIT_FAILURE);

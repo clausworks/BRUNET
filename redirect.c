@@ -130,7 +130,10 @@ int bytes_acked(int sock, long long unsigned int *nbytes) {
  * fd_remote: the fd for the proxy program on the peer host
  * Note - fd_local should not equal fd_remote
  *
- * Returns 0 if local connection ended, 1 if remote connection ended
+ * Returns 0 if a local connection ended, 1 if remote connection ended
+ * In other words, 0 if the user shut down their program, and we should follow
+ * suit and shut down the proxy program; 1 if the connection was interrupted and
+ * we should start the store-forward thing.
  * Returns -1 on error
  */
 int rdr_copy_fd(int fd_local, int fd_remote) {
@@ -175,7 +178,7 @@ int rdr_copy_fd(int fd_local, int fd_remote) {
         // Event: exceptional condition (OOB data)
 		if (fds[1].revents & POLLPRI) {
             fputs("POLLPRI\n", stderr);
-            return 1;
+            return 0;
         }
 
         // Event: fd not open
@@ -259,7 +262,7 @@ int rdr_redirect(Connection *conn, ConnectionRole role) {
     socklen_t addrlen = sizeof(struct sockaddr_in);
     long long unsigned int n_transmitted;
     int status;
-    char oob_byte = 255;
+    char oob_byte = 255; // TODO: make 255 a constant
 
     if (role == ROLE_CLIENT) {
         // FIXME: for multiple clients, we only do this once (?)
@@ -290,25 +293,26 @@ int rdr_redirect(Connection *conn, ConnectionRole role) {
         if (sock_local < 0) { return -1; }
     }
 
-    // Before copying data, 
-
     // Loop, copying from one to the other
     status = rdr_copy_fd(sock_local, sock_remote);
     switch (status) {
     case 0: // local socket closed
-        fprintf(stderr, "shutting remote+local down\n");
+        fprintf(stderr, "closing entire proxy connection\n");
         close(sock_local);
         send(sock_remote, &oob_byte, 1, MSG_OOB);
         fprintf(stderr, "Sent OOB byte\n");
         close(sock_remote);
-        fprintf(stderr, "Closed sock_remote\n");
+        fprintf(stderr, "closed sock_local and sock_remote\n");
+        // TODO: investigate whether sending OOB byte, if peer initiated closing
+        // connection, could cause issues
         break;
     case 1: // remote socket closed
         printf("[PLACEHOLDER] begin caching...\n");
         if (bytes_acked(sock_remote, &n_transmitted) == 0) {
-            fprintf(stderr, "bytes_acked: %llu\n", n_transmitted);
+            fprintf(stderr, "bytes acked by peer: %llu\n", n_transmitted);
         }
         close(sock_remote); // ?
+        fprintf(stderr, "closed sock_remote only");
         break;
     default: // error
         fprintf(stderr, "Error from rdr_copy_fd\n");
