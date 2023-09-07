@@ -49,10 +49,10 @@ int main(int argc, char **argv) {
     }
 
     if (params.conn[0].clnt.s_addr == params.this_dev.s_addr) {
-        rdr_redirect_clientside(&(params.conn[0]));
+        rdr_redirect(&(params.conn[0]), ROLE_CLIENT);
     }
     else {
-        rdr_redirect_serverside(&(params.conn[0]));
+        rdr_redirect(&(params.conn[0]), ROLE_SERVER);
     }
 
     if (rs_cleanup() != 0) {

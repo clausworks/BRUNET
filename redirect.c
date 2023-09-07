@@ -167,26 +167,10 @@ int rdr_copy_fd(int fd_local, int fd_remote) {
         }
 
         // Event: exceptional condition (OOB data)
-		if (fds[0].revents & POLLPRI) {
-            fputs("POLLPRI\n", stderr);
-            return -1;
-        }
 		if (fds[1].revents & POLLPRI) {
             fputs("POLLPRI\n", stderr);
-            return -1;
+            return 1;
         }
-
-        /*
-        // Event: peer closed connection
-		if (fds[0].revents & POLLRDHUP) {
-            fputs("fd 0 POLLRDHUP\n", stderr);
-            return -1;
-        }
-		if (fds[1].revents & POLLRDHUP) {
-            fputs("fd 1 POLLRDHUP\n", stderr);
-            return -1;
-        }
-        */
 
         // Event: fd not open
 		if (fds[0].revents & POLLNVAL) {
@@ -261,7 +245,7 @@ B) Proxy program on 10.0.0.2 [ROLE_SERVER]
 
 */
 
-int rdr_redirect_clientside(Connection *conn) {
+int rdr_redirect(Connection *conn, ConnectionRole role) {
     int sock_listen; // listening socket
     int sock_local, sock_remote;
     in_port_t port; // port used by connect(2)
@@ -271,23 +255,33 @@ int rdr_redirect_clientside(Connection *conn) {
     int status;
     char oob_byte = 255;
 
-    // FIXME: for multiple clients, we only do this once (?)
-    sock_listen = rdr_listen(htons(4321), OOB_DISABLE); // TODO: make 4321 a constant
-    if (sock_listen < 0) {
-        return -1;
+    if (role == ROLE_CLIENT) {
+        // FIXME: for multiple clients, we only do this once (?)
+        sock_listen = rdr_listen(htons(4321), OOB_DISABLE); // TODO: make 4321 a constant
+        if (sock_listen < 0) { return -1; }
+        // TODO: loop? Handle any spurious errors from accept? 
+        sock_local = accept(sock_listen, (struct sockaddr *)(&peer_addr), &addrlen);
+        if (sock_local < 0) {
+            perror("accept");
+            return -1;
+        }
+        port = htons(4321);
+        sock_remote = rdr_connect(conn->serv, port, OOB_ENABLE);
+        if (sock_remote < 0) { return -1; }
     }
-
-    // TODO: loop? Handle any spurious errors from accept? 
-    sock_local = accept(sock_listen, (struct sockaddr *)(&peer_addr), &addrlen);
-    if (sock_local < 0) {
-        perror("accept");
-        return -1;
-    }
-
-    port = htons(4321);
-    sock_remote = rdr_connect(conn->serv, port, OOB_ENABLE);
-    if (sock_remote < 0) {
-        return -1;
+    else {
+        // FIXME: for multiple clients, we only do this once (?)
+        sock_listen = rdr_listen(htons(4321), OOB_ENABLE); // TODO: make 4321 a constant
+        if (sock_listen < 0) { return -1; }
+        // TODO: loop? Handle any spurious errors from accept? 
+        sock_remote = accept(sock_listen, (struct sockaddr *)(&peer_addr), &addrlen);
+        if (sock_remote < 0) {
+            perror("accept");
+            return -1;
+        }
+        port = conn->serv_port;
+        sock_local = rdr_connect(conn->serv, port, OOB_DISABLE);
+        if (sock_local < 0) { return -1; }
     }
 
     // Before copying data, 
@@ -320,66 +314,3 @@ int rdr_redirect_clientside(Connection *conn) {
     close(sock_listen);
     return 0;
 }
-int rdr_redirect_serverside(Connection *conn) {
-    int sock_listen; // listening socket
-    int sock_local, sock_remote; // aliases to either of sock_accept/sock_connect above
-    in_port_t port; // port used by connect(2)
-    struct sockaddr_in peer_addr;
-    socklen_t addrlen = sizeof(struct sockaddr_in);
-    long long unsigned int n_transmitted;
-    int status;
-    char oob_byte = 255;
-
-    // FIXME: for multiple clients, we only do this once (?)
-    sock_listen = rdr_listen(htons(4321), OOB_ENABLE); // TODO: make 4321 a constant
-    if (sock_listen < 0) {
-        return -1;
-    }
-
-    // TODO: loop? Handle any spurious errors from accept? 
-    sock_remote = accept(sock_listen, (struct sockaddr *)(&peer_addr), &addrlen);
-    if (sock_remote < 0) {
-        perror("accept");
-        return -1;
-    }
-
-    port = conn->serv_port;
-    sock_local = rdr_connect(conn->serv, port, OOB_DISABLE);
-    if (sock_local < 0) {
-        return -1;
-    }
-
-    // Before copying data, 
-
-    // Loop, copying from one to the other
-    status = rdr_copy_fd(sock_local, sock_remote);
-    switch (status) {
-    case 0: // local socket closed
-        fprintf(stderr, "shutting remote+local down\n");
-        close(sock_local);
-        send(sock_remote, &oob_byte, 1, MSG_OOB);
-        fprintf(stderr, "Sent OOB byte\n");
-        close(sock_remote);
-        break;
-    case 1: // remote socket closed
-        printf("[PLACEHOLDER] begin caching...\n");
-        if (bytes_acked(sock_remote, &n_transmitted) == 0) {
-            fprintf(stderr, "bytes_acked: %llu\n", n_transmitted);
-        }
-        close(sock_remote); // ?
-        break;
-    default: // error
-        fprintf(stderr, "Error from rdr_copy_fd\n");
-        return -1;
-    }
-
-    fprintf(stderr, "Exiting rdr_redirect\n");
-    // FIXME: for multiple clients, we probably don't want to close listen socket
-    close(sock_listen);
-    return 0;
-}
-
-// OOB DATA
-// - Enable OOB w/ fctnl (APUE p. 626)
-// - Handle POLLPRI
-// - Read OOB data with 
