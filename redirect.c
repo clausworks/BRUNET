@@ -17,77 +17,7 @@
 #include "configfile.h"
 #include "redirect.h"
 
-int rdr_listen(in_port_t port_n, OutOfBandStatus oob) {
-    int sock;
-    struct sockaddr_in serv_addr;
-    int one = 1;
 
-    /* create socket to listen on */
-    if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
-        perror("socket");
-        return -1;
-    }
-
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
-        perror("setsockopt");
-        return -1;
-    }
-
-    /* set up address */
-    memset(&serv_addr, 0, sizeof(struct sockaddr_in));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY); /* any incoming interface */
-    serv_addr.sin_port = port_n;
-
-    /* bind to local address */
-    if (bind(sock, (struct sockaddr *)(&serv_addr), sizeof(struct
-        sockaddr_in)) < 0) {
-        perror("bind");
-        return -1;
-    }
-
-    /* listen for incoming connections on sock */
-    if (listen(sock, 16) < 0) { // TODO: #define for 16
-        perror("listen");
-        return -1;
-    }
-
-    if (oob == OOB_ENABLE) {
-        fcntl(sock, F_SETOWN, getpid());
-    }
-
-    return sock;
-}
-
-int rdr_connect(struct in_addr ip_n, in_port_t port_n, OutOfBandStatus oob) {
-    int sock; /* socket descriptor */
-    struct sockaddr_in serv_addr;
-
-    /* initialize socket */
-    if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
-        perror("socket");
-        return -1;
-    }
-
-    /* init serv_addr */
-    memset(&serv_addr, 0, sizeof(struct sockaddr_in));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr = ip_n;
-    serv_addr.sin_port = port_n;
-
-    if (oob == OOB_ENABLE) {
-        fcntl(sock, F_SETOWN, getpid());
-    }
-    
-    /* establish connection */
-    if (connect(sock, (struct sockaddr *)(&serv_addr), sizeof(struct
-        sockaddr_in)) < 0) {
-        perror("connect");
-        return -1;
-    }
-
-    return sock;
-}
 
 // from tcprdr
 // Returns number of bytes written

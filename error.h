@@ -7,12 +7,19 @@ typedef enum {
     LEVEL_ERROR
 } InfoLevel;
 
+typedef enum {
+    ERR_CONN,
+    ERR_FATAL
+} ErrorType;
+
 typedef struct {
     int level;
     char *msg;
 } ErrorStatus;
 
-int err_make(ErrorStatus *, InfoLevel, char *, ...);
+void err_msg(ErrorStatus *, char *, ...);
+void err_msg_append(ErrorStatus *, char *, ...);
+void err_msg_prepend(ErrorStatus *, char *, ...);
 void err_free(ErrorStatus *);
 void err_show(ErrorStatus *);
 

@@ -37,13 +37,12 @@ char *alloc_msg(const char *fmt, ...) {
     return p;
 }
 
-int err_make(ErrorStatus *e, InfoLevel l, char *fmt, ...) {
+// Function exits on failure
+void err_msg(ErrorStatus *e, char *fmt, ...) {
     va_list ap;
 
-    e->level = l;
-
     va_start(ap, fmt);
-    e->msg = make_msg(fmt, ap);
+    e->msg = alloc_msg(fmt, ap);
     va_end(ap);
 
     if (e->msg == NULL) {
@@ -52,11 +51,57 @@ int err_make(ErrorStatus *e, InfoLevel l, char *fmt, ...) {
     }
 }
 
+void err_msg_prepend(ErrorStatus *e, char *fmt, ...) {
+    char *prefix;
+    char *old;
+    va_list ap;
+
+    va_start(ap, fmt);
+    prefix = alloc_msg(fmt, ap);
+    va_end(ap);
+
+    if (prefix == NULL) {
+        fprintf(stderr, "Failed to prepend to error message\n");
+        exit(EXIT_FAILURE);
+    }
+
+    old = e->msg; // to free
+    err_msg(e, "%s%s", prefix, e->msg); // reassigns e->msg
+    free(old);
+}
+
+void err_msg_append(ErrorStatus *e, char *fmt, ...) {
+    char *suffix;
+    char *old;
+    va_list ap;
+
+    va_start(ap, fmt);
+    suffix = alloc_msg(fmt, ap);
+    va_end(ap);
+
+    if (suffix == NULL) {
+        fprintf(stderr, "Failed to append to error message\n");
+        exit(EXIT_FAILURE);
+    }
+
+    old = e->msg; // to free
+    err_msg(e, "%s%s", e->msg, suffix); // reassigns e->msg
+    free(old);
+}
+
 void err_free(ErrorStatus *e) {
     if (e->msg != NULL) {
         free(e->msg);
+        //free(e->payload); // no-op if payload==NULL
     }
 }
+
+/*
+void err_make(ErrorStatus *e, ErrorType *type, void *payload, size_t
+    payl_size, char *fmt, ...) {
+    void *payload_size
+}
+*/
 
 void err_show(ErrorStatus *e) {
     FILE *fp = stdout;
@@ -67,7 +112,7 @@ void err_show(ErrorStatus *e) {
         case LEVEL_INFO:
             fprintf(fp, "[INFO]  ");
             break;
-        case LEVEL_INFO:
+        case LEVEL_ERROR:
             fprintf(fp, "[ERROR] ");
             break;
     }
