@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <stddef.h>
+#include <stdbool.h>
 
 #include "error.h"
 
@@ -38,6 +42,18 @@ char *alloc_msg(const char *fmt, ...) {
 }
 
 // Function exits on failure
+
+void err_msg_errno(ErrorStatus *e, char *fmt, ...) {
+    va_list ap;
+    int errnum = errno; // save current errno
+    
+    va_start(ap, fmt);
+    err_msg(e, fmt, ap);
+    va_end(ap);
+
+    err_msg_append(e, " [%s]", strerror(errnum));
+}
+
 void err_msg(ErrorStatus *e, char *fmt, ...) {
     va_list ap;
 
@@ -89,6 +105,10 @@ void err_msg_append(ErrorStatus *e, char *fmt, ...) {
     free(old);
 }
 
+void err_init(ErrorStatus *e) {
+    e->msg = NULL;
+}
+
 void err_free(ErrorStatus *e) {
     if (e->msg != NULL) {
         free(e->msg);
@@ -105,6 +125,7 @@ void err_make(ErrorStatus *e, ErrorType *type, void *payload, size_t
 
 void err_show(ErrorStatus *e) {
     FILE *fp = stdout;
+    /*
     switch(e->level) {
         case LEVEL_DEBUG:
             fprintf(fp, "[DEBUG] ");
@@ -116,5 +137,6 @@ void err_show(ErrorStatus *e) {
             fprintf(fp, "[ERROR] ");
             break;
     }
-    fprintf(fp, "%s\n", e->msg);
+    */
+    fprintf(fp, "[ERROR] %s\n", e->msg);
 }

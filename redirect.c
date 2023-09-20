@@ -184,7 +184,8 @@ B) Proxy program on 10.0.0.2 [ROLE_SERVER]
 
 */
 
-int rdr_redirect(Connection *conn, ConnectionRole role) {
+/*
+int rdr_redirect(LogConn *conn, ConnectionRole role) {
     int sock_listen; // listening socket
     int sock_local, sock_remote;
     in_port_t port; // port used by connect(2)
@@ -254,3 +255,4 @@ int rdr_redirect(Connection *conn, ConnectionRole role) {
     close(sock_listen);
     return 0;
 }
+*/

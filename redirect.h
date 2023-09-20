@@ -1,6 +1,8 @@
 #ifndef REDIRECT_H
 #define REDIRECT_H
 
+#include <netinet/in.h>
+
 typedef enum { ROLE_CLIENT, ROLE_SERVER } ConnectionRole;
 typedef enum { OOB_ENABLE, OOB_DISABLE } OutOfBandStatus;
 typedef enum { CONN_STORE, CONN_ACTIVE, CONN_CLOSED } ConnectionStatus;
@@ -30,7 +32,7 @@ typedef struct {
     struct in_addr clnt;
     struct in_addr serv;
     in_port_t serv_port;
-    unsigned id;
+    unsigned inst;
 } LogConn;
 
 /* Peer */

@@ -1,27 +1,26 @@
 #ifndef CACHE_H
 #define CACHE_H
 
-#define CACHE_BLOCK_SIZE 1024
+#include "configfile.h"
+
+#define CACHE_FNAME_SIZE 256
+#define CACHE_MAX_PAGES 4096
+#define CACHE_DEFAULT_PAGES 128
+#define CACHE_BLK_PER_PAGE 4
 
 typedef struct {
-    off_t free_hd;
-    off_t act_hd;
-    off_t act_tl;
-    off_t read[CF_MAX_PEERS];
-    off_t write;
-    off_t ack;
+    long long free_hd; // first free block
+    long long act_hd;  // head of active block linked list
+    long long act_tl;  // tail of active block linked list
+    int num_peers;
+    struct in_addr peers[CF_MAX_DEVICES];
+    long long read[CF_MAX_DEVICES]; // read offsets for peers: next byte to read
+    long long write;   // write offset: next available byte to write to
+    long long ack;     // ack offset: last byte acked
 } CacheFileHeader;
 
 typedef struct {
-    off_t next;
-    uint8_t data[CACHE_BLOCK_SIZE - sizeof(off_t)];
+    long long next;
 } CacheFileBlock;
-
-int cache_new_files(LogConn *c, ErrorState *e) {
-    // Create a new cache files for a connection (fwd, bkwd)
-}
-
-int cache_add_to_free
-
 
 #endif

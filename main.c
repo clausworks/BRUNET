@@ -116,7 +116,7 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n) {
 
 int poll_lsocks(struct pollfd *fds, ErrorStatus *e) {
     // TODO? adjust timeout for poll?
-    switch(poll(fds, num_fds, -1)) {
+    switch(poll(fds, 2, -1)) {
     case -1:
         // spurious errors
         if (errno == EINTR || errno == EAGAIN)
@@ -129,7 +129,7 @@ int poll_lsocks(struct pollfd *fds, ErrorStatus *e) {
         return -1;
     }
 
-    for (int i = 0; i < num_fds; ++i) {
+    for (int i = 0; i < 2; ++i) {
         // Event: hangup
         //   Peer closed its end of the channel. Should still read from channel
         //   until recv returns 0.
@@ -249,11 +249,15 @@ int main(int argc, char **argv) {
     if (user_lsock < 0 || proxy_lsock < 0) {
         exit(EXIT_FAILURE);
     }
-    lfds[0] = user_lsock;
-    lfds[1] = proxy_lsock;
+
+    lfds[0].fd = user_lsock;
+    lfds[1].fd = proxy_lsock;
 
     for (;;) {
-        poll_lsocks(lfds);
+        ErrorStatus err_listen;
+        err_init(&err_listen);
+
+        poll_lsocks(lfds, &err_listen);
 
         // TODO: Attempt to CONNECT to peers -> sockets
         // 1. Go through managed connections

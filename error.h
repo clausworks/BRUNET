@@ -13,11 +13,13 @@ typedef enum {
 } ErrorType;
 
 typedef struct {
-    int level;
+    //int level;
     char *msg;
 } ErrorStatus;
 
+void err_init(ErrorStatus *);
 void err_msg(ErrorStatus *, char *, ...);
+void err_msg_errno(ErrorStatus *, char *, ...);
 void err_msg_append(ErrorStatus *, char *, ...);
 void err_msg_prepend(ErrorStatus *, char *, ...);
 void err_free(ErrorStatus *);
