@@ -14,6 +14,7 @@
 #include "configfile.h"
 #include "ruleset.h"
 #include "redirect.h"
+#include "cache.h"
 
 
 void sighandler_cleanup(int sig) {
@@ -28,8 +29,7 @@ void init_sighandlers() {
 
     if (0 != sigemptyset(&(sa.sa_mask))) {
         perror("sigemptyset");
-        exit(EXIT_FAILURE);
-    }
+        exit(EXIT_FAILURE); }
     //TODO: add SIGTERM
     if (0 != sigaddset(&(sa.sa_mask), SIGINT)) {
         perror("sigaddset");
@@ -211,6 +211,11 @@ int poll_sockets(struct pollfd *fds, int num_fds, ErrorStatus *e) {
     return 0;
 }
 
+void test() {
+    printf("Running global test function...\n\n\n");
+    __test_caching();
+}
+
 int main(int argc, char **argv) {
     ConfigFileParams config;
     int user_lsock;
@@ -218,6 +223,10 @@ int main(int argc, char **argv) {
     PeerProxy proxy_peers[CF_MAX_DEVICES];
     int user_socks[CF_MAX_USER_CONNS];
 
+#ifdef __TEST
+    test();
+    return 0;
+#else
     // Poll fds
 	struct pollfd lfds[] = {{.events = POLLIN}, {.events = POLLIN}};
 
@@ -301,4 +310,5 @@ int main(int argc, char **argv) {
     }
 
     return 0;
+#endif
 }

@@ -23,4 +23,15 @@ typedef struct {
     long long next;
 } CacheFileBlock;
 
+typedef struct {
+    int fd_fwd;
+    int fd_bkwd;
+    CacheFileHeader *mmap_fwd;
+    CacheFileHeader *mmap_bkwd;
+} Cache;
+
+#ifdef __TEST
+void __test_caching(void);
+#endif
+
 #endif
