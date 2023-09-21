@@ -9,10 +9,10 @@
 #define CACHE_BLK_PER_PAGE 4
 
 typedef struct {
-    long long free_hd; // first free block
-    long long act_hd;  // head of active block linked list
+    //long long act_hd;  // head of active block linked list
     long long act_tl;  // tail of active block linked list
-    int num_peers;
+    long long free_hd; // first free block
+    int n_peers;
     struct in_addr peers[CF_MAX_DEVICES];
     long long read[CF_MAX_DEVICES]; // read offsets for peers: next byte to read
     long long write;   // write offset: next available byte to write to

@@ -7,19 +7,20 @@
 #include <stdbool.h>
 
 #include "error.h"
+#include "errnoname.h"
 
 // Derived from make_message function at `man 3 printf`
-char *alloc_msg(const char *fmt, ...) {
+char *alloc_msg(const char *fmt, va_list ap) {
     int n = 0;
     size_t size = 0;
     char *p = NULL;
-    va_list ap;
+    //va_list ap;
 
     // Determine required size
 
-    va_start(ap, fmt);
+    //va_start(ap, fmt);
     n = vsnprintf(p, size, fmt, ap);
-    va_end(ap);
+    //va_end(ap);
 
     if (n < 0) return NULL;
 
@@ -28,10 +29,11 @@ char *alloc_msg(const char *fmt, ...) {
     size = (size_t) n + 1;
     p = malloc(size);
     if (p == NULL) return NULL;
+    memset(p, 0, size);
 
-    va_start(ap, fmt);
+    //va_start(ap, fmt);
     n = vsnprintf(p, size, fmt, ap);
-    va_end(ap);
+    //va_end(ap);
 
     if (n < 0) {
        free(p);
@@ -43,28 +45,29 @@ char *alloc_msg(const char *fmt, ...) {
 
 // Function exits on failure
 
-void err_msg_errno(ErrorStatus *e, char *fmt, ...) {
-    va_list ap;
-    int errnum = errno; // save current errno
-    
-    va_start(ap, fmt);
-    err_msg(e, fmt, ap);
-    va_end(ap);
+/* va_list version of err_msg for local use
+ */
+static void _err_msg(ErrorStatus *e, char *fmt, va_list ap) {
+    //va_list ap;
 
-    err_msg_append(e, " [%s]", strerror(errnum));
-}
-
-void err_msg(ErrorStatus *e, char *fmt, ...) {
-    va_list ap;
-
-    va_start(ap, fmt);
+    //va_start(ap, fmt);
     e->msg = alloc_msg(fmt, ap);
-    va_end(ap);
+    //va_end(ap);
 
     if (e->msg == NULL) {
         fprintf(stderr, "Failed to generate error message\n");
         exit(EXIT_FAILURE);
     }
+}
+
+/* Public version with variadic arguments
+ */
+void err_msg(ErrorStatus *e, char *fmt, ...) {
+    va_list ap;
+
+    va_start(ap, fmt);
+    _err_msg(e, fmt, ap);
+    va_end(ap);
 }
 
 void err_msg_prepend(ErrorStatus *e, char *fmt, ...) {
@@ -103,6 +106,17 @@ void err_msg_append(ErrorStatus *e, char *fmt, ...) {
     old = e->msg; // to free
     err_msg(e, "%s%s", e->msg, suffix); // reassigns e->msg
     free(old);
+}
+
+void err_msg_errno(ErrorStatus *e, char *fmt, ...) {
+    va_list ap;
+    int errnum = errno; // save current errno
+    
+    va_start(ap, fmt);
+    _err_msg(e, fmt, ap);
+    va_end(ap);
+
+    err_msg_append(e, " [%s: %s]", errnoname(errnum), strerror(errnum));
 }
 
 void err_init(ErrorStatus *e) {
