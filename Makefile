@@ -25,4 +25,4 @@ test: $(C_SRC) $(C_HDR)
 	$(CC) $(CFLAGS) -g -D__TEST $(C_SRC) -o $(TEST_TARGET) $(LIBARGS) $(TEST_FLAGS)
 
 clean:
-	rm -vf $(C_OBJ) $(TARGET) $(CACHE_FILES)
+	rm -vf $(C_OBJ) $(TARGET) $(TEST_TARGET) $(CACHE_FILES)

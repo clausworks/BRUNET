@@ -146,7 +146,7 @@ static void _cachefile_init(CacheFileHeader *f, struct in_addr peers[], int n_pe
  */
 static int _extend_active_list(CacheFileHeader *f, ErrorStatus *e) {
     CacheFileBlock *blk_act_tl = _off_to_blk(f, f->act_tl);
-    CacheFileBlock *blk_free_hd;
+    //CacheFileBlock *blk_free_hd;
     long long new_free_hd_off;
     long long new_blk_off;
     int status;

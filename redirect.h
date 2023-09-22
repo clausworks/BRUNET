@@ -9,6 +9,9 @@ typedef enum { CONN_STORE, CONN_ACTIVE, CONN_CLOSED } ConnectionStatus;
 
 #define RDR_BUF_SIZE 4096
 
+#define USER_LSOCK_IDX 0
+#define PROXY_LSOCK_IDX 1
+
 /*
 typedef struct {
     char buf[RDR_BUF_SIZE];
@@ -40,7 +43,18 @@ typedef struct {
     struct in_addr addr;
     int sock_in;
     int sock_out;
-} PeerProxy;
+} PeerState;
+
+typedef struct {
+    int sock;
+} UserProgState;
+
+typedef struct {
+    int n_peers;
+    PeerState peers[CF_MAX_DEVICES];
+    int n_user_progs;
+    UserProgState user_progs[CF_MAX_USER_CONNS];
+} ProgramState;
 
 /* Packet "within the system" carrying a payload */
 typedef struct {
