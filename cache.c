@@ -42,9 +42,14 @@ static char *_off_to_byteptr(CacheFileHeader *base, long long off) {
     return (char *)((char *)base + off);
 }
 
-static long long _next_from_off(CacheFileHeader *base, long long off) {
+static long long _get_next_from_off(CacheFileHeader *base, long long off) {
     CacheFileBlock *b = _off_to_blk(base, off);
     return b->next;
+}
+
+static void _set_next_from_off(CacheFileHeader *base, long long off, long long new) {
+    CacheFileBlock *b = _off_to_blk(base, off);
+    b->next = new;
 }
 
 /* Add a block to the beginning of the free list. Blocks are in the free list by
@@ -53,10 +58,15 @@ static long long _next_from_off(CacheFileHeader *base, long long off) {
  *
  * blk_off: the offset in bytes of the block from the beginning of the file
  */
-static void _blk_add_to_free(CacheFileHeader *f, long long blk_off) {
-    CacheFileBlock *b = _off_to_blk(f, blk_off); // offset into mmap'ed region
-    b->next = f->free_hd;
+static void _create_free_blk(CacheFileHeader *f, long long blk_off) {
+    _set_next_from_off(f, blk_off, f->free_hd);
     f->free_hd = blk_off;
+
+//#ifdef __TEST
+    //printf("_create_free_blk:\n");
+    //__print_blk(f, blk_off);
+    //__print_ll(NULL, f, f->free_hd);
+//#endif
 }
 
 /* If active tail block is full and free list is empty, double the size of the
@@ -73,11 +83,15 @@ static int _cachefile_expand(CacheFileHeader *f, ErrorStatus *e) {
 }
 
 static void _cachefile_init(CacheFileHeader *f, struct in_addr peers[], int n_peers) {
-    const int num_blks = CACHE_DEFAULT_PAGES / CACHE_BLK_PER_PAGE;
+    const int num_blks = CACHE_DEFAULT_PAGES * CACHE_BLK_PER_PAGE;
     CacheFileBlock *b;
     long long off;
 
     memset(f, 0, sizeof(CacheFileHeader));
+
+#ifdef __TEST
+    //printf("initial num. blk: %d\n", num_blks);
+#endif
 
     // Initialize each block's `next` offset.
     // - First block is header. Separate init for that.
@@ -86,21 +100,23 @@ static void _cachefile_init(CacheFileHeader *f, struct in_addr peers[], int n_pe
 
     // Active block
     off = 1*_blk_bytes;
-    //f->act_hd = off;
+    f->act_hd = off;
     f->act_tl = off;
     b = _off_to_blk(f, off);
     b->next = -1;
 
     // Free blocks (list will be in reverse order). This should have no effect
     // on performance, but may be slightly counterintuitive.
-    f->free_hd = 2*_blk_bytes;
-    for (int i = 2; i < num_blks - 1; ++i) {
-        _blk_add_to_free(f, i*_blk_bytes);
+    f->free_hd = -1;
+    for (int i = 2; i < num_blks; ++i) {
+        _create_free_blk(f, i*_blk_bytes);
     }
 
     // Last free block
+    /*
     b = _off_to_blk(f, (num_blks-1)*_blk_bytes);
     b->next = -1;
+    */
 
     // read/write/ack heads
     // read: offset of next byte available to read
@@ -131,7 +147,8 @@ static void _cachefile_init(CacheFileHeader *f, struct in_addr peers[], int n_pe
 static int _extend_active_list(CacheFileHeader *f, ErrorStatus *e) {
     CacheFileBlock *blk_act_tl = _off_to_blk(f, f->act_tl);
     CacheFileBlock *blk_free_hd;
-    long long free_hd_new;
+    long long new_free_hd_off;
+    long long new_blk_off;
     int status;
 
     // Out of free blocks. Extend file to make more.
@@ -145,13 +162,27 @@ static int _extend_active_list(CacheFileHeader *f, ErrorStatus *e) {
     // DEBUG
     assert(blk_act_tl->next == -1);
     assert(f->free_hd != -1);
+#ifdef __TEST
+    __print_ll("_extend_active_list (before)", f, f->act_hd);
+#endif
 
-    blk_free_hd = _off_to_blk(f, f->free_hd);
-    free_hd_new = blk_free_hd->next;
+    // Offsets: first two blocks in free list
+    new_blk_off = f->free_hd;
+    new_free_hd_off = _get_next_from_off(f, f->free_hd);
 
-    blk_free_hd->next = -1; // remove from free list
-    blk_act_tl->next = f->free_hd; // append to active list
-    f->free_hd = free_hd_new; // new free head
+    // Set new head, remove pointer to free from old head
+    f->free_hd = new_free_hd_off;
+    _set_next_from_off(f, new_blk_off, -1);
+
+    // Active list: update old tail to point to new block. Update record for tail.
+    _set_next_from_off(f, f->act_tl, new_blk_off);
+    f->act_tl = new_blk_off;
+
+#ifdef __TEST
+    printf("_extend_active_list");
+    __print_blk(f, new_blk_off);
+    __print_ll("_extend_active_list (after)", f, f->act_hd);
+#endif
 
     return 0;
 }
@@ -173,6 +204,7 @@ int cachefile_write(CacheFileHeader *f, char *buf, long long buflen,
     long long empty; // empty bytes in current block
     long long nbytes; // number of bytes to copy
     long long remaining = buflen; // bytes remaining to be written
+    long long written = 0;
     int status;
 
     while (remaining > 0) {
@@ -199,9 +231,10 @@ int cachefile_write(CacheFileHeader *f, char *buf, long long buflen,
             }
         }
 
-        memcpy(write_head, buf, nbytes);
+        memcpy(write_head, buf + written, nbytes);
         f->write += nbytes;
         remaining -= nbytes; // if remaining < empty, remaining==0 -> loop exits
+        written += nbytes;
 
         // Reached end of block, reposition write head at new tail item.
         if (f->write % _blk_bytes == 0) {
@@ -271,7 +304,7 @@ int cachefile_read(CacheFileHeader *f, struct in_addr peer, char *buf,
             nbytes = blk_avail;
         }
 
-        memcpy(buf, read_head, nbytes);
+        memcpy(buf + total, read_head, nbytes);
 
         buf_avail -= nbytes;
         f->read[p] += nbytes;
@@ -279,7 +312,7 @@ int cachefile_read(CacheFileHeader *f, struct in_addr peer, char *buf,
 
         // Reached end of block: jump over header
         if (f->read[p] % _blk_bytes == 0) {
-            f->read[p] = _next_from_off(f, blk_off) + sizeof(CacheFileBlock);
+            f->read[p] = _get_next_from_off(f, blk_off) + sizeof(CacheFileBlock);
         }
     }
 
@@ -352,39 +385,66 @@ int cache_init(Cache *cache, LogConn *c, struct in_addr peers[], int n_peers, Er
     // TODO: try O_TMPFILE
 
     // FORWARD DIRECTION
-    if (_gen_fname(c, fname, "_fwd", e) < 0) {
+    if (_gen_fname(c, fname, "fwd", e) < 0) {
         err_msg_prepend(e, "fname fwd: ");
         return -1;
     }
-    cache->fd_fwd = _create_file(c, fname, e);
-    if (cache->fd_fwd < 0) { return -1; }
+    cache->fwd.fd = _create_file(c, fname, e);
+    if (cache->fwd.fd < 0) { return -1; }
     // BACKWARD DIRECTION
-    if (_gen_fname(c, fname, "_bkwd", e) < 0) {
+    if (_gen_fname(c, fname, "bkwd", e) < 0) {
         err_msg_prepend(e, "fname bkwd: ");
         return -1;
     }
-    cache->fd_bkwd = _create_file(c, fname, e);
-    if (cache->fd_bkwd < 0) { return -1; }
+    cache->bkwd.fd = _create_file(c, fname, e);
+    if (cache->bkwd.fd < 0) { return -1; }
 
     f = mmap(0, CACHE_DEFAULT_PAGES * _page_bytes,
-        PROT_READ | PROT_WRITE, MAP_SHARED, cache->fd_fwd, 0);
+        PROT_READ | PROT_WRITE, MAP_SHARED, cache->fwd.fd, 0);
     if (f == MAP_FAILED) {
         err_msg_errno(e, "mmap failed (fwd)");
         return -1;
     }
     _cachefile_init(f, peers, n_peers);
-    cache->mmap_fwd = f;
+    cache->fwd.mmap_base = f;
 
     f = mmap(0, CACHE_DEFAULT_PAGES * _page_bytes,
-        PROT_READ | PROT_WRITE, MAP_SHARED, cache->fd_bkwd, 0);
+        PROT_READ | PROT_WRITE, MAP_SHARED, cache->bkwd.fd, 0);
     if (f == MAP_FAILED) {
         err_msg_errno(e, "mmap failed (bkwd)");
         return -1;
     }
     _cachefile_init(f, peers, n_peers);
-    cache->mmap_bkwd = f;
+    cache->bkwd.mmap_base = f;
 
     return 0;
+}
+
+int cache_close(Cache *cache, ErrorStatus *e) {
+    int status;
+    status = munmap(cache->fwd.mmap_base, cache->fwd.mmap_len);
+    if (status < 0) {
+        err_msg_errno(e, "munmap fwd");
+        return -1;
+    }
+    status = munmap(cache->bkwd.mmap_base, cache->bkwd.mmap_len);
+    if (status < 0) {
+        err_msg_errno(e, "munmap bkwd");
+        return -1;
+    }
+    close(cache->fwd.fd);
+    close(cache->bkwd.fd);
+    // Cleanup to trigger error on accidental reuse
+    memset(cache, 0, sizeof(Cache));
+    cache->fwd.fd = -1;
+    cache->bkwd.fd = -1;
+    return 0;
+}
+
+int cache_sync(Cache *cache, ErrorStatus *e) {
+    // TODO: stub
+    printf("cache_sync: stub\n");
+    return -1;
 }
 
 
@@ -394,28 +454,63 @@ int cache_init(Cache *cache, LogConn *c, struct in_addr peers[], int n_peers, Er
 
 #ifdef __TEST
 
-static void __print_cfhdr(CacheFileHeader *f) {
-    printf("\nCACHE FILE (@ %16p)\n", f);
-    printf("free_hd: 0x%08llx (%lld)\n", f->free_hd, f->free_hd);
-    //printf("act_hd:  0x%08llx (%lld)\n", f->act_hd, f->act_hd);
-    printf("act_tl:  0x%08llx (%lld)\n", f->act_tl, f->act_tl);
-    printf("read (n_peers = %d):\n", f->n_peers);
+void __print_cfhdr(CacheFileHeader *f) {
+    printf("\nCACHE FILE (@%p)\n", f);
+    printf("    free_hd: %llx (%lld)\n", f->free_hd, f->free_hd);
+    printf("    act_hd:  %llx (%lld)\n", f->act_hd, f->act_hd);
+    printf("    act_tl:  %llx (%lld)\n", f->act_tl, f->act_tl);
+    printf("    read (n_peers = %d):\n", f->n_peers);
     for (int i = 0; i < f->n_peers; ++i) {
-        printf("  %15s 0x%08llx (%lld)\n",
+        printf("      %15s %llx (%lld)\n",
             inet_ntoa(f->peers[i]), f->read[i], f->read[i]);
     }
-    printf("write:  0x%08llx (%lld)\n", f->write, f->write);
-    printf("ack:    0x%08llx (%lld)\n", f->ack, f->ack);
+    printf("    write:  %llx (%lld)\n", f->write, f->write);
+    printf("    ack:    %llx (%lld)\n", f->ack, f->ack);
     printf("\n");
 }
 
-static void __print_blk(CacheFileHeader *f, long long off) {
+void __print_blk(CacheFileHeader *f, long long off) {
+    long long next = _get_next_from_off(f, off);
+    printf("BLOCK (@%p)\n", f);
+    printf("    off:  0x%llx (%lld)\n", off, off);
+    printf("    next: 0x%llx (%lld)\n", next, next);
+}
+
+void __print_blk_contents(CacheFileHeader *f, long long off) {
     CacheFileBlock *blk = _off_to_blk(f, off);
-    printf("\nBLOCK (@ %16p)\n", f);
-    printf("offset: 0x%08llx (%lld)\n", off, off);
-    printf("next:   0x%08llx (%lld)\n", off, off);
-    hex_dump("full block contents", blk, _blk_bytes, 48);
+    printf("\nBLOCK (@%p)\n", f);
+    hex_dump("full block contents", blk, _blk_bytes, 32);
     printf("\n");
+}
+
+void __print_ll(char *prefix, CacheFileHeader *f, long long head) {
+    long long next;
+    int count = 0;
+
+    if (prefix == NULL)
+        printf("LIST: ");
+    else
+        printf("LIST (%s): ", prefix);
+
+    if (head == -1) {
+        printf("no items\n");
+        return;
+    }
+    count++;
+    printf("%llx ", head);
+
+    next = _get_next_from_off(f, head);
+    while (next != -1) {
+        count++;
+        printf("%llx ", next);
+        if (count > 10) {
+            printf("\nended early\n");
+            return;
+        }
+        next = _get_next_from_off(f, next);
+    }
+
+    printf("[%d items]\n", count);
 }
 
 static int __test_caching_1() {
@@ -435,6 +530,7 @@ static int __test_caching_1() {
     lc1.clnt = ipA;
     lc1.serv = ipB;
     lc1.serv_port = htons(1234);
+    lc1.inst = 0;
     peers[0] = ipB;
     n_peers = 1;
 
@@ -442,8 +538,10 @@ static int __test_caching_1() {
         err_show(&e);
         return -1;
     }
-    __print_cfhdr(cache.mmap_fwd);
-    __print_cfhdr(cache.mmap_bkwd);
+    __print_cfhdr(cache.fwd.mmap_base);
+    __print_cfhdr(cache.bkwd.mmap_base);
+
+    cache_close(&cache, &e);
     return 0;
 }
 
@@ -476,7 +574,7 @@ static int __test_caching_2() {
         return -1;
     }
 
-    f = cache.mmap_fwd;
+    f = cache.fwd.mmap_base;
 
     strcpy(wbuf, "Hello world");
     status = cachefile_write(f, wbuf, strlen(wbuf), &e);
@@ -496,6 +594,7 @@ static int __test_caching_2() {
     __print_cfhdr(f);
     __print_blk(f, f->act_tl);
     
+    cache_close(&cache, &e);
     return 0;
 }
 
@@ -506,8 +605,8 @@ static int __test_caching_3() {
     int n_peers;
     Cache cache;
     LogConn lc1;
-    char wbuf[5000] = {0};
-    char rbuf[5000] = {0};
+    char wbuf[5001] = {0};
+    char rbuf[5001] = {0};
     int status;
     CacheFileHeader *f;
 
@@ -520,6 +619,7 @@ static int __test_caching_3() {
     lc1.clnt = ipA;
     lc1.serv = ipB;
     lc1.serv_port = htons(1234);
+    lc1.inst = 0;
     peers[0] = ipB;
     n_peers = 1;
 
@@ -528,29 +628,111 @@ static int __test_caching_3() {
         return -1;
     }
 
-    f = cache.mmap_fwd;
+    f = cache.fwd.mmap_base;
 
-    for (int i = 0; i < 5000; ++i) wbuf[i] = 'A';
-    status = cachefile_write(f, wbuf, strlen(wbuf), &e);
+    __print_ll("active", f, f->ack / _blk_bytes * _blk_bytes);
+    __print_ll("free", f, f->free_hd);
+
+    for (int i = 0; i < 1000; ++i) wbuf[     i] = 'A';
+    for (int i = 0; i < 1000; ++i) wbuf[1000+i] = 'B';
+    for (int i = 0; i < 1000; ++i) wbuf[2000+i] = 'C';
+    for (int i = 0; i < 1000; ++i) wbuf[3000+i] = 'D';
+    for (int i = 0; i < 1000; ++i) wbuf[4000+i] = 'E';
+    hex_dump("wbuf", wbuf, 5000, 32);
+    status = cachefile_write(f, wbuf, 5000, &e);
     if (status < 0) {
         err_show(&e);
         return -1;
     }
-    __print_cfhdr(f);
+    //__print_cfhdr(f);
+    
+    __print_blk(f, f->act_hd);
+    __print_blk_contents(f, f->act_hd);
     __print_blk(f, f->act_tl);
+    __print_blk_contents(f, f->act_tl);
 
     status = cachefile_read(f, ipB, rbuf, 5000, &e);
-    hex_dump("read result (beginning)", rbuf, 48, 48);
-    hex_dump("read result (end)", rbuf + 5000 - 48, 48, 48);
+    hex_dump("rbuf", rbuf, 5000, 32);
     if (status < 0) {
         err_show(&e);
         return -1;
     }
+
+    if (memcmp(rbuf, wbuf, 5000) == 0) {
+        printf("read/write matched\n");
+    }
+    else {
+        printf("read/write failed\n");
+    }
     __print_cfhdr(f);
-    //__print_blk(f, f->act_tl);
     
+    cache_close(&cache, &e);
     return 0;
 }
+
+static int __test_caching_4(int nbytes) {
+    struct in_addr ipA, ipB;
+    ErrorStatus e;
+    struct in_addr peers[CF_MAX_DEVICES];
+    int n_peers;
+    Cache cache;
+    LogConn lc1;
+    char wbuf[10000] = {0};
+    char rbuf[10000] = {0};
+    int status;
+    CacheFileHeader *f;
+
+    assert(nbytes <= 10000);
+
+    printf("\n[__test_caching_4(%d)]\n", nbytes);
+
+    err_init(&e);
+
+    inet_aton("10.0.0.1", &ipA);
+    inet_aton("10.0.0.2", &ipB);
+    lc1.clnt = ipA;
+    lc1.serv = ipB;
+    lc1.serv_port = htons(1234);
+    lc1.inst = 0;
+    peers[0] = ipB;
+    n_peers = 1;
+
+    if (cache_init(&cache, &lc1, peers, n_peers, &e) < 0) {
+        err_show(&e);
+        return -1;
+    }
+
+    f = cache.fwd.mmap_base;
+
+    // setup
+    memset(wbuf, 'a', nbytes);
+
+    // write
+    status = cachefile_write(f, wbuf, nbytes, &e);
+    if (status < 0) {
+        err_show(&e);
+        return -1;
+    }
+
+    // read
+    status = cachefile_read(f, ipB, rbuf, nbytes, &e);
+    if (status < 0) {
+        err_show(&e);
+        return -1;
+    }
+
+    // check
+    if (memcmp(rbuf, wbuf, nbytes) == 0) {
+        printf("read/write matched\n");
+    }
+    else {
+        printf("read/write failed\n");
+    }
+    
+    cache_close(&cache, &e);
+    return 0;
+}
+
 
 void __test_caching() {
     printf("[__test_caching]\n");
@@ -563,7 +745,11 @@ void __test_caching() {
 
     //__test_caching_1();
     //__test_caching_2();
-    __test_caching_3();
+    //__test_caching_3();
+    __test_caching_4(1015);
+    __test_caching_4(1016);
+    __test_caching_4(1017);
+    __test_caching_4(7112);
 
     exit(EXIT_SUCCESS);
 }

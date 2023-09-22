@@ -5,12 +5,13 @@
 
 #define CACHE_FNAME_SIZE 256
 #define CACHE_MAX_PAGES 4096
-#define CACHE_DEFAULT_PAGES 128
+#define CACHE_DEFAULT_PAGES 2
 #define CACHE_BLK_PER_PAGE 4
 
 typedef struct {
     //long long act_hd;  // head of active block linked list
     long long act_tl;  // tail of active block linked list
+    long long act_hd;  // head of active block linked list
     long long free_hd; // first free block
     int n_peers;
     struct in_addr peers[CF_MAX_DEVICES];
@@ -24,14 +25,22 @@ typedef struct {
 } CacheFileBlock;
 
 typedef struct {
-    int fd_fwd;
-    int fd_bkwd;
-    CacheFileHeader *mmap_fwd;
-    CacheFileHeader *mmap_bkwd;
+    int fd;
+    CacheFileHeader *mmap_base;
+    long long mmap_len;
+} OpenCacheFile;
+
+typedef struct {
+    OpenCacheFile fwd;
+    OpenCacheFile bkwd;
 } Cache;
 
 #ifdef __TEST
 void __test_caching(void);
+void __print_ll(char *, CacheFileHeader *, long long);
+void __print_cfhdr(CacheFileHeader *);
+void __print_blk(CacheFileHeader *, long long);
+void __print_blk_contents(CacheFileHeader *, long long);
 #endif
 
 #endif
