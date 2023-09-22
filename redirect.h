@@ -49,12 +49,19 @@ typedef struct {
     int sock;
 } UserProgState;
 
+/*
 typedef struct {
-    int n_peers;
+    int user_lsock;
+    int proxy_lsock;
     PeerState peers[CF_MAX_DEVICES];
-    int n_user_progs;
-    UserProgState user_progs[CF_MAX_USER_CONNS];
+    UserProgState userprogs[CF_MAX_USER_CONNS];
+    int n_peers;
+    int n_userprogs;
+    struct pollfd listen_fds[2];
+    struct pollfd proxy_fds[CF_MAX_DEVICES];
+    struct pollfd user_fds[CF_MAX_USER_CONNS];
 } ProgramState;
+*/
 
 /* Packet "within the system" carrying a payload */
 typedef struct {

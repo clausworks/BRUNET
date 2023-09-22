@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <errno.h>
+#include <stdbool.h>
 
 #include "error.h"
 #include "configfile.h"
@@ -115,7 +116,7 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n) {
 }
 
 int poll_lsocks(struct pollfd *fds,
-    PeerState *peers, UserProgState *user_progs,
+    PeerState *peers, UserProgState *userprogs,
     ErrorStatus *e) {
 
     // TODO? adjust timeout for poll?
@@ -154,13 +155,14 @@ int poll_lsocks(struct pollfd *fds,
         }
         // Event: can recv
         else if (fds[i].revents & POLLIN) {
-            int sock = accept(fds[i], (struct sockaddr *)(&peer_addr), &addrlen);
+            struct sockaddr_in peer_addr;
+            socklen_t addrlen = sizeof(struct sockaddr_in);
+            int sock = accept(fds[i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
             if (sock < 0) {
                 err_msg(e, "accept");
                 return -1;
             }
             // TODO: add sock to user_fds
-            if (
         }
     }
 
@@ -249,6 +251,20 @@ static int setup_listen_fds(struct pollfd lfds[],
     return 0;
 }
 
+static int build_user_fds(struct pollfd user_fds[], UserProgState userprogs[], ErrorStatus *e) {
+    int u = 0;
+
+    memset(user_fds, 0, sizeof(struct pollfd) * CF_MAX_USER_CONNS);
+
+    for (int i; i < CF_MAX_USER_CONNS; ++i) {
+        if (userprogs[i].sock > 0) {
+            user_fds[u].fd = userprogs[i]->sock;
+            user_fds[u].events = POLLIN | POLLOUT;
+            ++u;
+        }
+    }
+}
+
 
 int main(int argc, char **argv) {
     ErrorStatus e;
@@ -257,13 +273,17 @@ int main(int argc, char **argv) {
 
     int user_lsock;
     int proxy_lsock;
-    PeerState peers[CF_MAX_DEVICES] = {{0, -1, -1}};
-    UserProgState user_progs[CF_MAX_USER_CONNS] = {{-1}};
+    PeerState peers[CF_MAX_DEVICES];
+    UserProgState userprogs[CF_MAX_USER_CONNS];
 
     // Active sockets to poll:
+    bool peers_changed;
+    bool userprogs_changed;
     struct pollfd listen_fds[2] = {0};
     struct pollfd user_fds[CF_MAX_USER_CONNS] = {0};
     struct pollfd peer_fds[CF_MAX_DEVICES] = {0};
+
+    // TODO: init fd lists, peers, userprogs, etc.
 
 #ifdef __TEST
     test();
