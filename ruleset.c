@@ -198,7 +198,7 @@ int rs_cleanup() {
 
     //printf("cleanup: AFTER ---------------------\n");
     //nft_run_cmd_from_buffer(nft, "list ruleset");
-    printf("cleanup");
+    printf("Cleaned up ruleset\n");
 
     nft_ctx_free(nft);
 
