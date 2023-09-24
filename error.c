@@ -154,3 +154,13 @@ void err_show(ErrorStatus *e) {
     */
     fprintf(fp, "[ERROR] %s\n", e->msg);
 }
+
+/*
+void loginfo(InfoLevel level, char *fmt, ...) {
+    va_list ap;
+
+    va_start(ap, fmt);
+    _err_msg(e, fmt, ap);
+    va_end(ap);
+}
+*/

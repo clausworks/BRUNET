@@ -17,6 +17,7 @@
 #include "redirect.h"
 #include "cache.h"
 
+
 void sighandler_cleanup(int sig) {
     rs_cleanup();
     exit(0);
@@ -89,13 +90,18 @@ int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
     return sock;
 }
 
-int attempt_connect(struct in_addr ip_n, in_port_t port_n) {
+int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
     int sock; /* socket descriptor */
     struct sockaddr_in serv_addr;
 
     /* initialize socket */
     if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
-        perror("socket");
+        err_msg_errno(e, "attempt_connect: socket");
+        return -1;
+    }
+
+    if (fcntl(sock, F_SETFL, O_NONBLOCK) < 0) {
+        err_msg_errno(e, "attempt_connect: set O_NONBLOCK failed");
         return -1;
     }
 
@@ -108,7 +114,8 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n) {
     /* establish connection */
     if (connect(sock, (struct sockaddr *)(&serv_addr), sizeof(struct
         sockaddr_in)) < 0) {
-        perror("connect");
+        // FIXME IGNORE SOME ERRORS
+        err_msg_errno(e, "connect");
         return -1;
     }
 
@@ -224,43 +231,109 @@ void test() {
 }
 #endif
 
-static int setup_listen_fds(struct pollfd lfds[],
-    int *usock, int *psock,
-    struct in_addr this_dev, ErrorStatus *e) {
-    
-    // FIXME: for usock, bind to LOOPBACK
-    // TODO: may have to adjust ruleset to allow for this
-    *usock = begin_listen(this_dev, CF_USER_LISTEN_PORT, e);
-    if (*usock < 0) {
-        err_msg_prepend(e, "user socket ");
-        return -1;
+static void init_poll_fds(struct pollfd fds[], ConnectivityState *s) {
+    struct pollfd *user_fds = fds + 2;
+    struct pollfd *proxy_fds = fds + 2 + CF_MAX_USER_CONNS;
+
+    // Listen sockets
+    fds[POLL_USOCK_IDX].fd = s->user_lsock;
+    fds[POLL_USOCK_IDX].events = POLLIN;
+    fds[POLL_PSOCK_IDX].fd = s->proxy_lsock;
+    fds[POLL_PSOCK_IDX].events = POLLIN;
+
+    // Local user program sockets
+    for (int i = 0; i < CF_MAX_USER_CONNS; ++i) {
+        int sock = s->userconns[i].sock;
+        user_fds[i].events = POLLIN | POLLOUT;
+        user_fds[i].fd = (sock >= 0) ? sock : -1;
     }
 
-    *psock = begin_listen(this_dev, CF_PROXY_LISTEN_PORT, e);
-    if (*psock < 0) {
-        err_msg_prepend(e, "proxy socket ");
-        return -1;
+    // Proxy sockets from other peers
+    for (int i = 0; i < CF_MAX_DEVICES; ++i) {
+        int sock = s->peers[i].sock;
+        proxy_fds[i].events = POLLIN | POLLOUT;
+        proxy_fds[i].fd = (sock >= 0) ? sock : -1;
     }
-
-    lfds[USER_LSOCK_IDX].fd = *usock;
-    lfds[PROXY_LSOCK_IDX].fd = *psock;
-
-    lfds[USER_LSOCK_IDX].events = POLLIN;
-    lfds[PROXY_LSOCK_IDX].events = POLLIN;
-
-    return 0;
 }
 
-static int build_user_fds(struct pollfd user_fds[], UserProgState userprogs[], ErrorStatus *e) {
-    int u = 0;
+/*
+static void update_poll_fds(struct pollfd fds[], ConnectivityState *s) {
+    struct pollfd *user_fds = fds + 2;
+    struct pollfd *proxy_fds = fds + 2 + CF_MAX_USER_CONNS;
 
-    memset(user_fds, 0, sizeof(struct pollfd) * CF_MAX_USER_CONNS);
+    // Local user program sockets
+    for (int i = 0; i < CF_MAX_USER_CONNS; ++i) {
+        int sock = s->userconns[i].sock;
+        user_fds[i].fd = (sock >= 0) ? sock : -1;
+    }
 
-    for (int i; i < CF_MAX_USER_CONNS; ++i) {
-        if (userprogs[i].sock > 0) {
-            user_fds[u].fd = userprogs[i]->sock;
-            user_fds[u].events = POLLIN | POLLOUT;
-            ++u;
+    // Proxy sockets from other peers
+    for (int i = 0; i < CF_MAX_DEVICES; ++i) {
+        int sock = s->peers[i].sock;
+        proxy_fds[i].fd = (sock >= 0) ? sock : -1;
+    }
+}
+*/
+
+/* Take the list of Logical Connections and build a corresponding pollfd array
+ * from it. Only LogConns with sock>=0 are considered (therefore, the LogConn
+ * list may include nonactive/nonexistent LogConns). This function overwrites
+ * the entire old user_fds array.
+ *
+ * Returns: number of (nonnegative) file descriptors added to user_fds.
+ */
+
+/* Take the list of all peers in the system and build a pollfd array from the
+ * peers which are currently connected (i.e. have sock=>0). This function
+ * overwrites the entire old peer_fds array.
+ *
+ * Returns: number of (nonnegative) file descriptors added to peer_fds.
+ */
+
+static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
+    struct in_addr this = config->this_dev;
+    struct in_addr c; // current client addr
+    struct in_addr s; // current server addr
+    int p = 0; // index into state->peers
+    bool found;
+
+    memset(state->peers, 0, sizeof(PeerState) * CF_MAX_DEVICES);
+
+    // Glean peer IP addresses from managed client/server pairs
+    // Store each IP address once in config->pairs
+    for (int i = 0; i < config->n_pairs && p < CF_MAX_DEVICES; ++i) {
+        state->peers[i].sock = -1; // all peers should have invalid socket fd
+
+        // Algorithm to find unique IP addresses
+        c = config->pairs[i].clnt;
+        s = config->pairs[i].serv;
+        if (c.s_addr != this.s_addr) { // IP represents a peer
+            found = false;
+            for (int j = 0; j < p; ++j) { // TODO: enforce CF_MAX_DEVICES
+                if (c.s_addr == state->peers[j].addr.s_addr) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                state->peers[p].addr = c;
+                printf("Added peer %s\n", inet_ntoa(c));
+                ++p;
+            }
+        }
+        if (s.s_addr != this.s_addr) {
+            found = false;
+            for (int j = 0; j < p; ++j) { // TODO: enforce CF_MAX_DEVICES
+                if (s.s_addr == state->peers[j].addr.s_addr) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                state->peers[p].addr = s;
+                printf("Added peer %s\n", inet_ntoa(s));
+                ++p;
+            }
         }
     }
 }
@@ -268,20 +341,10 @@ static int build_user_fds(struct pollfd user_fds[], UserProgState userprogs[], E
 
 int main(int argc, char **argv) {
     ErrorStatus e;
-
     ConfigFileParams config;
+    ConnectivityState state;
 
-    int user_lsock;
-    int proxy_lsock;
-    PeerState peers[CF_MAX_DEVICES];
-    UserProgState userprogs[CF_MAX_USER_CONNS];
-
-    // Active sockets to poll:
-    bool peers_changed;
-    bool userprogs_changed;
-    struct pollfd listen_fds[2] = {0};
-    struct pollfd user_fds[CF_MAX_USER_CONNS] = {0};
-    struct pollfd peer_fds[CF_MAX_DEVICES] = {0};
+    struct pollfd poll_fds[POLL_NUM_FDS];
 
     // TODO: init fd lists, peers, userprogs, etc.
 
@@ -314,8 +377,24 @@ int main(int argc, char **argv) {
     }
     */
 
-    setup_listen_fds(listen_fds, &user_lsock, &proxy_lsock, config.this_dev, &e);
+    // Initialize connectivity state struct
+    // TODO: loopback
+    if ((state.user_lsock = begin_listen(config.this_dev, CF_USER_LISTEN_PORT, &e)) < 0) {
+        err_msg_prepend(&e, "user socket ");
+        err_show(&e);
+        return -1;
+    }
+    if ((state.proxy_lsock = begin_listen(config.this_dev, CF_PROXY_LISTEN_PORT, &e)) < 0) {
+        err_msg_prepend(&e, "proxy socket ");
+        err_show(&e);
+        return -1;
+    }
 
+    init_peers(&state, &config);
+
+    init_poll_fds(poll_fds, &state);
+
+    /*
     while (1) { 
         ErrorStatus err_listen;
         err_init(&err_listen);
@@ -330,7 +409,7 @@ int main(int argc, char **argv) {
 
         // TODO: Attempt to CONNECT to peers -> sockets
         // 1. Go through managed connections
-        for (int i = 0; i < CF_MAX_PAIRS; ++i) {
+        for (int i = 0; i < config.n_pairs; ++i) {
             int s;
             ManagedPair *p = &(config.pairs[i]);
             if (p->clnt.s_addr == config.this_dev.s_addr) {
@@ -363,6 +442,7 @@ int main(int argc, char **argv) {
         // On POLLOUT, write whole packet (if data is cached)
         // On error, update socket list(s)
     }
+    */
 
     if (rs_cleanup() != 0) {
         fprintf(stderr, "Failed to cleanup nft ruleset\n");
