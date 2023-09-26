@@ -142,7 +142,13 @@ void test() {
 
 static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
     struct pollfd *user_fds = fds + POLL_NUM_LSOCKS;
-    struct pollfd *proxy_fds = fds + POLL_NUM_LSOCKS + CF_MAX_USER_CONNS;
+    struct pollfd *proxy_fds = fds + POLL_NUM_LSOCKS + POLL_NUM_USOCKS;
+
+    // memset to avoid any bugs
+    memset(fds, 0, sizeof(struct pollfd) * POLL_NUM_FDS);
+    for (int i = 0; i < POLL_NUM_FDS; ++i) {
+        fds[i].fd = -1; // invalid, will be skipped by poll(2)
+    }
 
     // Listen sockets
     fds[POLL_USOCK_IDX].fd = state->user_lsock;
@@ -151,7 +157,7 @@ static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
     fds[POLL_PSOCK_IDX].events = POLLIN;
 
     // Local user program sockets
-    for (int i = 0; i < CF_MAX_USER_CONNS; ++i) {
+    for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
         int s = state->userconns[i].sock;
         user_fds[i].events = POLLIN | POLLOUT;
         user_fds[i].fd = (s >= 0) ? s : -1;
@@ -167,10 +173,10 @@ static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
 
 static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
     struct pollfd *user_fds = fds + POLL_NUM_LSOCKS;
-    struct pollfd *proxy_fds = fds + POLL_NUM_LSOCKS + CF_MAX_USER_CONNS;
+    struct pollfd *proxy_fds = fds + POLL_NUM_LSOCKS + POLL_NUM_USOCKS;
 
     // Local user program sockets
-    for (int i = 0; i < CF_MAX_USER_CONNS; ++i) {
+    for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
         int s = state->userconns[i].sock;
         user_fds[i].fd = (s >= 0) ? s : -1;
     }
@@ -228,7 +234,7 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
 
     // Glean peer IP addresses from managed client/server pairs
     // Store each IP address once in config->pairs
-    for (int i = 0; i < config->n_pairs && p < CF_MAX_DEVICES; ++i) {
+    for (int i = 0; i < config->n_pairs && p < POLL_NUM_PSOCKS; ++i) {
         state->peers[i].sock = -1; // all peers should have invalid socket fd
 
         // Algorithm to find unique IP addresses
@@ -236,7 +242,7 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
         s = config->pairs[i].serv;
         if (c.s_addr != this.s_addr) { // IP represents a peer
             found = false;
-            for (int j = 0; j < p; ++j) { // TODO: enforce CF_MAX_DEVICES
+            for (int j = 0; j < p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
                 if (c.s_addr == state->peers[j].addr.s_addr) {
                     found = true;
                     break;
@@ -250,7 +256,7 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
         }
         if (s.s_addr != this.s_addr) {
             found = false;
-            for (int j = 0; j < p; ++j) { // TODO: enforce CF_MAX_DEVICES
+            for (int j = 0; j < p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
                 if (s.s_addr == state->peers[j].addr.s_addr) {
                     found = true;
                     break;
@@ -289,7 +295,7 @@ static int init_connectivity_state(ConnectivityState *state,
 
     init_peers(state, config);
 
-    for (int i = 0; i < CF_MAX_USER_CONNS; ++i) {
+    for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
         state->userconns[i].sock = -1;
     }
 
@@ -304,9 +310,9 @@ static ConnectionType get_fd_conntype(int i) {
         return CONNTYPE_INVALID;
     else if (i < POLL_NUM_LSOCKS)
         return CONNTYPE_LISTEN;
-    else if (i < POLL_NUM_LSOCKS + CF_MAX_USER_CONNS)
+    else if (i < POLL_NUM_LSOCKS + POLL_NUM_USOCKS)
         return CONNTYPE_USER;
-    else if (i < POLL_NUM_LSOCKS + CF_MAX_USER_CONNS + CF_MAX_DEVICES)
+    else if (i < POLL_NUM_LSOCKS + POLL_NUM_USOCKS + POLL_NUM_PSOCKS)
         return CONNTYPE_PROXY;
     else
         return CONNTYPE_INVALID;

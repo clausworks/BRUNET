@@ -16,7 +16,9 @@ typedef enum { CONNTYPE_LISTEN, CONNTYPE_USER, CONNTYPE_PROXY, CONNTYPE_INVALID}
 #define POLL_USOCK_IDX 0
 #define POLL_PSOCK_IDX 1
 #define POLL_NUM_LSOCKS 2
-#define POLL_NUM_FDS (2 + CF_MAX_USER_CONNS + CF_MAX_DEVICES)
+#define POLL_NUM_USOCKS CF_MAX_USER_CONNS
+#define POLL_NUM_PSOCKS CF_MAX_DEVICES
+#define POLL_NUM_FDS (POLL_NUM_LSOCKS + POLL_NUM_USOCKS + POLL_NUM_PSOCKS)
 
 /*
 typedef struct {
@@ -62,9 +64,9 @@ typedef struct {
 typedef struct {
     int user_lsock; // sock to get connections to user programs
     int proxy_lsock; // sock to to get connections to other proxies
-    PeerState peers[CF_MAX_DEVICES]; // peers in system, with sockets
+    PeerState peers[POLL_NUM_PSOCKS]; // peers in system, with sockets
     int n_peers;
-    LogConn userconns[CF_MAX_USER_CONNS]; // active (tracked) connections w/ user programs
+    LogConn userconns[POLL_NUM_USOCKS]; // active (tracked) connections w/ user programs
     struct changed {
         bool peers; // true if peers array has been changed
         bool userconns; // true if userconns has been changed
