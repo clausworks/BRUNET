@@ -52,7 +52,7 @@ int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
     struct sockaddr_in serv_addr;
     int one = 1;
 
-    /* create socket to listen on */
+    // create socket to listen on
     if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
         err_msg_errno(e, "begin_listen: socket");
         return -1;
@@ -68,33 +68,38 @@ int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
         return -1;
     }
 
-    /* set up address */
+    // set up address
+    addr.s_addr = INADDR_ANY; // FIXME: remove (debug only)
+
     memset(&serv_addr, 0, sizeof(struct sockaddr_in));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr = addr;
     serv_addr.sin_port = port;
 
-    /* bind to local address */
+    // bind to local address
     if (bind(sock, (struct sockaddr *)(&serv_addr), sizeof(struct
         sockaddr_in)) < 0) {
         err_msg_errno(e, "begin_listen: bind");
         return -1;
     }
 
-    /* listen for incoming connections on sock */
+    // listen for incoming connections on sock
     if (listen(sock, CF_MAX_LISTEN_QUEUE) < 0) {
         err_msg_errno(e, "begin_listen: listen");
         return -1;
     }
 
+    printf("Listening on %s:%hu\n", inet_ntoa(addr), ntohs(port));
+
     return sock;
 }
 
 int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
-    int sock; /* socket descriptor */
+    int sock; // socket descriptor
     struct sockaddr_in serv_addr;
+    int status;
 
-    /* initialize socket */
+    // initialize socket
     if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
         err_msg_errno(e, "attempt_connect: socket");
         return -1;
@@ -105,123 +110,27 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
         return -1;
     }
 
-    /* init serv_addr */
+    // init serv_addr
     memset(&serv_addr, 0, sizeof(struct sockaddr_in));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr = ip_n;
     serv_addr.sin_port = port_n;
 
-    /* establish connection */
-    if (connect(sock, (struct sockaddr *)(&serv_addr), sizeof(struct
-        sockaddr_in)) < 0) {
-        // FIXME IGNORE SOME ERRORS
-        err_msg_errno(e, "connect");
-        return -1;
+    // establish connection
+    status = connect(sock, (struct sockaddr *)(&serv_addr),
+        sizeof(struct sockaddr_in));
+    if (status < 0) {
+        // Ignore EINPROGRESS. This is normal because the socket is nonblocking.
+        // Connection is complete when poll(2) triggers POLLOUT. Note, however,
+        // that when the socket becomes writable, we must check SO_ERROR is 0
+        // using getsockopt(2) to ensure the connection was successful.
+        if (errno != EINPROGRESS) {
+            err_msg_errno(e, "connect");
+            return -1;
+        }
     }
 
     return sock;
-}
-
-int poll_lsocks(struct pollfd *fds,
-    PeerState *peers, UserProgState *userprogs,
-    ErrorStatus *e) {
-
-    // TODO? adjust timeout for poll?
-    switch(poll(fds, 2, -1)) {
-    case -1:
-        // spurious errors
-        if (errno == EINTR || errno == EAGAIN)
-            return 0; // TODO? continue ?
-        err_msg_errno(e, "poll");
-        return -1;
-    case 0:
-        /* should not happen, we requested infinite wait */
-        err_msg(e, "poll timed out");
-        return -1;
-    }
-
-    for (int i = 0; i < 2; ++i) {
-        // Policy:
-        // Any error is considered fatal.
-        // TODO: verify this.
-
-        // Event: hangup
-        if (fds[i].revents & POLLHUP) {
-            err_msg(e, "POLLHUP");
-            return -1;
-        }
-        // Event: fd not open
-        else if (fds[i].revents & POLLNVAL) {
-            err_msg(e, "POLLNVAL");
-            return -1;
-        }
-        // Event: other error
-        else if (fds[i].revents & POLLERR) {
-            err_msg(e, "POLLERR");
-            return -1;
-        }
-        // Event: can recv
-        else if (fds[i].revents & POLLIN) {
-            struct sockaddr_in peer_addr;
-            socklen_t addrlen = sizeof(struct sockaddr_in);
-            int sock = accept(fds[i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
-            if (sock < 0) {
-                err_msg(e, "accept");
-                return -1;
-            }
-            // TODO: add sock to user_fds
-        }
-    }
-
-    return 0;
-}
-int poll_sockets(struct pollfd *fds, int num_fds, ErrorStatus *e) {
-    // TODO? adjust timeout for poll?
-    switch(poll(fds, num_fds, -1)) {
-    case -1:
-        // spurious errors
-        if (errno == EINTR || errno == EAGAIN)
-            return 0; // TODO? continue ?
-        perror("poll");
-        return -1;
-    case 0:
-        /* should not happen, we requested infinite wait */
-        fputs("Timed out?!", stderr);
-        return -1;
-    }
-
-    for (int i = 0; i < num_fds; ++i) {
-        // Event: hangup
-        //   Peer closed its end of the channel. Should still read from channel
-        //   until recv returns 0.
-        if (fds[i].revents & POLLHUP) {
-            err_msg(e, "POLLHUP");
-            return -1;
-        }
-        // Event: fd not open
-        //   Close & remove from poll list.
-        else if (fds[i].revents & POLLNVAL) {
-            err_msg(e, "POLLNVAL");
-            return -1;
-        }
-        // Event: other error
-        //   Close & remove from poll list;
-        else if (fds[i].revents & POLLERR) {
-            err_msg(e, "POLLERR");
-            return -1;
-        }
-        // Event: can recv
-        //   Handle based on what this socket does.
-        if (fds[i].revents & POLLIN) {
-        }
-        // Event: can send
-        //   Handle based on what this socket does.
-        if (fds[i].revents & POLLOUT) {
-        }
-        // TODO: check for unhandled poll event
-    }
-
-    return 0;
 }
 
 #ifdef __TEST
@@ -231,49 +140,69 @@ void test() {
 }
 #endif
 
-static void init_poll_fds(struct pollfd fds[], ConnectivityState *s) {
-    struct pollfd *user_fds = fds + 2;
-    struct pollfd *proxy_fds = fds + 2 + CF_MAX_USER_CONNS;
+static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
+    struct pollfd *user_fds = fds + POLL_NUM_LSOCKS;
+    struct pollfd *proxy_fds = fds + POLL_NUM_LSOCKS + CF_MAX_USER_CONNS;
 
     // Listen sockets
-    fds[POLL_USOCK_IDX].fd = s->user_lsock;
+    fds[POLL_USOCK_IDX].fd = state->user_lsock;
     fds[POLL_USOCK_IDX].events = POLLIN;
-    fds[POLL_PSOCK_IDX].fd = s->proxy_lsock;
+    fds[POLL_PSOCK_IDX].fd = state->proxy_lsock;
     fds[POLL_PSOCK_IDX].events = POLLIN;
 
     // Local user program sockets
     for (int i = 0; i < CF_MAX_USER_CONNS; ++i) {
-        int sock = s->userconns[i].sock;
+        int s = state->userconns[i].sock;
         user_fds[i].events = POLLIN | POLLOUT;
-        user_fds[i].fd = (sock >= 0) ? sock : -1;
+        user_fds[i].fd = (s >= 0) ? s : -1;
     }
 
     // Proxy sockets from other peers
-    for (int i = 0; i < CF_MAX_DEVICES; ++i) {
-        int sock = s->peers[i].sock;
+    for (int i = 0; i < state->n_peers; ++i) {
+        int s = state->peers[i].sock;
         proxy_fds[i].events = POLLIN | POLLOUT;
-        proxy_fds[i].fd = (sock >= 0) ? sock : -1;
+        proxy_fds[i].fd = (s >= 0) ? s : -1;
     }
 }
 
-/*
-static void update_poll_fds(struct pollfd fds[], ConnectivityState *s) {
-    struct pollfd *user_fds = fds + 2;
-    struct pollfd *proxy_fds = fds + 2 + CF_MAX_USER_CONNS;
+static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
+    struct pollfd *user_fds = fds + POLL_NUM_LSOCKS;
+    struct pollfd *proxy_fds = fds + POLL_NUM_LSOCKS + CF_MAX_USER_CONNS;
 
     // Local user program sockets
     for (int i = 0; i < CF_MAX_USER_CONNS; ++i) {
-        int sock = s->userconns[i].sock;
-        user_fds[i].fd = (sock >= 0) ? sock : -1;
+        int s = state->userconns[i].sock;
+        user_fds[i].fd = (s >= 0) ? s : -1;
     }
 
     // Proxy sockets from other peers
-    for (int i = 0; i < CF_MAX_DEVICES; ++i) {
-        int sock = s->peers[i].sock;
-        proxy_fds[i].fd = (sock >= 0) ? sock : -1;
+    for (int i = 0; i < state->n_peers; ++i) {
+        int s = state->peers[i].sock;
+        proxy_fds[i].fd = (s >= 0) ? s : -1;
     }
 }
-*/
+
+/* Connect to all peers which don't yet have valid sockets. Since connect is
+ * nonblocking, attempt_connect should return without errors even if no peers
+ * will eventually connect. See note at attempt_connect for more info for how
+ * this should be handled.
+ */
+static int connect_to_peers(ConnectivityState *state, ErrorStatus *e) {
+    int s;
+    for (int i = 0; i < state->n_peers; ++i) {
+        if (state->peers[i].sock >= 0) continue;
+        s = attempt_connect(state->peers[i].addr, htons(CF_PROXY_LISTEN_PORT), e);
+        if (s < 0) {
+            err_show(e);
+            // TODO: handle fatal errors?
+        }
+        else {
+            state->peers[i].sock = s;
+        }
+    }
+
+    return 0;
+}
 
 /* Take the list of Logical Connections and build a corresponding pollfd array
  * from it. Only LogConns with sock>=0 are considered (therefore, the LogConn
@@ -296,8 +225,6 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
     struct in_addr s; // current server addr
     int p = 0; // index into state->peers
     bool found;
-
-    memset(state->peers, 0, sizeof(PeerState) * CF_MAX_DEVICES);
 
     // Glean peer IP addresses from managed client/server pairs
     // Store each IP address once in config->pairs
@@ -336,6 +263,194 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
             }
         }
     }
+
+    state->n_peers = p;
+    printf("Found %d peers\n", p);
+}
+
+static int init_connectivity_state(ConnectivityState *state,
+    ConfigFileParams *config, ErrorStatus *e) {
+
+    memset(state, 0, sizeof(ConnectivityState));
+    
+    // TODO: loopback
+    state->user_lsock = begin_listen(config->this_dev,
+        htons(CF_USER_LISTEN_PORT), e);
+    if (state->user_lsock < 0) {
+        err_msg_prepend(e, "user socket ");
+        return -1;
+    }
+    state->proxy_lsock = begin_listen(config->this_dev,
+        htons(CF_PROXY_LISTEN_PORT), e);
+    if (state->proxy_lsock < 0) {
+        err_msg_prepend(e, "proxy socket ");
+        return -1;
+    }
+
+    init_peers(state, config);
+
+    for (int i = 0; i < CF_MAX_USER_CONNS; ++i) {
+        state->userconns[i].sock = -1;
+    }
+
+    state->changed.peers = false;
+    state->changed.userconns = false;
+
+    return 0;
+}
+
+static ConnectionType get_fd_conntype(int i) {
+    if (i < 0)
+        return CONNTYPE_INVALID;
+    else if (i < POLL_NUM_LSOCKS)
+        return CONNTYPE_LISTEN;
+    else if (i < POLL_NUM_LSOCKS + CF_MAX_USER_CONNS)
+        return CONNTYPE_USER;
+    else if (i < POLL_NUM_LSOCKS + CF_MAX_USER_CONNS + CF_MAX_DEVICES)
+        return CONNTYPE_PROXY;
+    else
+        return CONNTYPE_INVALID;
+}
+
+static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    struct sockaddr_in peer_addr;
+    socklen_t addrlen;
+    int sock;
+
+    switch(get_fd_conntype(fd_i)) {
+    case CONNTYPE_LISTEN:
+        printf("Handling CONNTYPE_LISTEN\n");
+        addrlen = sizeof(struct sockaddr_in);
+        sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
+
+        if (sock < 0) {
+            // Error: discard socket
+            switch (errno) {
+            case EAGAIN:
+            // NOTE: checking for EWOULDBLOCK causes a compilation error since
+            // its value is the same as EAGAIN
+            // case EWOULDBLOCK:
+                err_msg_errno(e, "no pending connections");
+                break;
+            // See accept(2)>return value>error handling: 
+            case ENETDOWN:
+            case EPROTO:
+            case ENOPROTOOPT:
+            case EHOSTDOWN:
+            case ENONET:
+            case EHOSTUNREACH:
+            case EOPNOTSUPP:
+            case ENETUNREACH:
+                err_msg_errno(e, "TCP/IP protocol error");
+                break;
+            case ECONNABORTED:
+                err_msg_errno(e, "connection aborted before accept succeeded");
+                break;
+            default:
+                err_msg_errno(e, "");
+                break;
+            }
+            err_msg_prepend(e, "accept: ");
+            return -1;
+        }
+        else {
+            // Accept initiated. Since the listening socket is nonblocking, this
+            // socket will become writable (and will trigger poll) as soon as
+            // the connection completes. See 
+            printf("accepted conn from %s\n", inet_ntoa(peer_addr.sin_addr));
+        }
+        // TODO: add socket to user_fds
+        // TODO: close sockets when appropriate (and remove from lists)
+        break;
+    case CONNTYPE_USER:
+    case CONNTYPE_PROXY:
+    default:
+        printf("No operation for this socket\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+static int poll_kitchen_sink(ConnectivityState *state, struct pollfd fds[],
+    ErrorStatus fd_errors[], ErrorStatus *main_err) {
+
+    int poll_status;
+    bool did_rw;
+    int fd_remaining;
+
+    printf("poll blocking... ");
+    poll_status = poll(fds, POLL_NUM_FDS, -1);
+    printf("returned %d\n", poll_status);
+
+    // Handle errors
+    if (poll_status <= -1) {
+        // spurious errors
+        if (errno == EINTR || errno == EAGAIN) {
+            return 0; // retry later
+        }
+        else {
+            err_msg_errno(main_err, "poll");
+            return -1;
+        }
+    }
+    else if (poll_status == 0) {
+        /* should not happen, we requested infinite wait */
+        err_msg(main_err, "poll timed out");
+        return -1;
+    }
+    // Process fd events
+    else {
+        // Check each fd for events
+        fd_remaining = poll_status;
+        for (int i = 0; i < POLL_NUM_FDS && fd_remaining > 0; ++i) {
+            ErrorStatus *e = &fd_errors[i];
+            did_rw = false;
+
+            // Event: hangup
+            if (fds[i].revents & POLLHUP) {
+                --fd_remaining;
+                err_msg(e, "POLLHUP");
+                continue;
+            }
+            // Event: fd not open
+            else if (fds[i].revents & POLLNVAL) {
+                --fd_remaining;
+                err_msg(e, "POLLNVAL");
+                continue;
+            }
+            // Event: other error
+            else if (fds[i].revents & POLLERR) {
+                --fd_remaining;
+                err_msg(e, "POLLERR");
+                continue;
+            }
+            // Event: readable
+            if (fds[i].revents & POLLIN) {
+                --fd_remaining;
+                did_rw = true;
+                handle_pollin(state, fds, i, e);
+                //if (handle_pollin(state, fds, i, e) < 0) {
+                    //err_show(e);
+                //}
+            }
+            // Event: writable
+            if (fds[i].revents & POLLOUT) {
+                --fd_remaining;
+                did_rw = true;
+                printf("pollout\n");
+            }
+
+            // We shouldn't get here normally...
+            if (!did_rw) {
+                err_msg(e, "Unhandled event: revents=%x\n", fds[i].revents);
+            }
+        } // end for
+    } // end else
+
+    return 0;
 }
 
 
@@ -343,10 +458,8 @@ int main(int argc, char **argv) {
     ErrorStatus e;
     ConfigFileParams config;
     ConnectivityState state;
-
     struct pollfd poll_fds[POLL_NUM_FDS];
-
-    // TODO: init fd lists, peers, userprogs, etc.
+    ErrorStatus fd_errors[POLL_NUM_FDS];
 
 #ifdef __TEST
     test();
@@ -368,31 +481,51 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-    /*
-    if (params.conn[0].clnt.s_addr == params.this_dev.s_addr) {
-        rdr_redirect(&(params.conn[0]), ROLE_CLIENT);
-    }
-    else {
-        rdr_redirect(&(params.conn[0]), ROLE_SERVER);
-    }
-    */
-
-    // Initialize connectivity state struct
-    // TODO: loopback
-    if ((state.user_lsock = begin_listen(config.this_dev, CF_USER_LISTEN_PORT, &e)) < 0) {
-        err_msg_prepend(&e, "user socket ");
+    if (init_connectivity_state(&state, &config, &e) < 0) {
         err_show(&e);
-        return -1;
+        exit(EXIT_FAILURE);
     }
-    if ((state.proxy_lsock = begin_listen(config.this_dev, CF_PROXY_LISTEN_PORT, &e)) < 0) {
-        err_msg_prepend(&e, "proxy socket ");
-        err_show(&e);
-        return -1;
-    }
-
-    init_peers(&state, &config);
-
     init_poll_fds(poll_fds, &state);
+
+    // DA BIG LOOP
+    while (1) {
+
+        // TODO: logical connections
+        connect_to_peers(&state, &e); // TODO: handle errors
+        update_poll_fds(poll_fds, &state);
+
+        for (int i = 0; i < POLL_NUM_FDS; ++i) {
+            err_init(fd_errors + i);
+        }
+
+        // Do everything. Yup, even the kitchen sink.
+        if (poll_kitchen_sink(&state, poll_fds, fd_errors, &e) != 0) {
+            err_show(&e);
+            exit(EXIT_FAILURE);
+        }
+
+        // fix
+        // Print any errors (TODO: make this more efficient)
+        for (int i = 0; i < POLL_NUM_FDS; ++i) {
+            err_show_if_present(fd_errors + i);
+            err_reset(fd_errors + i);
+        }
+        
+        // fix
+        for (int i = 0; i < POLL_NUM_FDS; ++i) {
+            err_free(fd_errors + i);
+        }
+
+    }
+
+    err_free(&e);
+    printf("Done :)\n");
+
+    // TASKS
+    // Poll
+    // a. New connections
+    // b. Data to read/write
+    // Update poll fds
 
     /*
     while (1) { 

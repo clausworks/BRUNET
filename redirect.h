@@ -8,12 +8,14 @@
 
 typedef enum { ROLE_CLIENT, ROLE_SERVER } ConnectionRole;
 typedef enum { OOB_ENABLE, OOB_DISABLE } OutOfBandStatus;
-typedef enum { CONN_STORE, CONN_ACTIVE, CONN_CLOSED } ConnectionStatus;
+//typedef enum { CONN_STORE, CONN_ACTIVE, CONN_CLOSED } ConnectionStatus;
+typedef enum { CONNTYPE_LISTEN, CONNTYPE_USER, CONNTYPE_PROXY, CONNTYPE_INVALID} ConnectionType;
 
 #define RDR_BUF_SIZE 4096
 
 #define POLL_USOCK_IDX 0
 #define POLL_PSOCK_IDX 1
+#define POLL_NUM_LSOCKS 2
 #define POLL_NUM_FDS (2 + CF_MAX_USER_CONNS + CF_MAX_DEVICES)
 
 /*
@@ -44,7 +46,7 @@ typedef struct {
     // There maybe old data from old connections sitting around in the system,
     // and the original sock may have been closed and reused by a new
     // connection.
-    int sock;
+    int sock; // LogConn is invalid if sock < 0
 } LogConn;
 
 /* Peer */
@@ -58,17 +60,15 @@ typedef struct {
 } UserProgState;
 
 typedef struct {
-    int user_lsock;
-    int proxy_lsock;
-    PeerState peers[CF_MAX_DEVICES];
-    LogConn userconns[CF_MAX_USER_CONNS];
-    /*
-    struct changes {
-        bool peers;
-        bool userconns;
-    };
-    */
-    //int n_peers;
+    int user_lsock; // sock to get connections to user programs
+    int proxy_lsock; // sock to to get connections to other proxies
+    PeerState peers[CF_MAX_DEVICES]; // peers in system, with sockets
+    int n_peers;
+    LogConn userconns[CF_MAX_USER_CONNS]; // active (tracked) connections w/ user programs
+    struct changed {
+        bool peers; // true if peers array has been changed
+        bool userconns; // true if userconns has been changed
+    } changed;
     //int n_userconns;
 } ConnectivityState;
 

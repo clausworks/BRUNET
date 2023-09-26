@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #include "error.h"
 #include "errnoname.h"
@@ -48,11 +49,9 @@ char *alloc_msg(const char *fmt, va_list ap) {
 /* va_list version of err_msg for local use
  */
 static void _err_msg(ErrorStatus *e, char *fmt, va_list ap) {
-    //va_list ap;
+    err_reset(e); // free any preexisting error message
 
-    //va_start(ap, fmt);
     e->msg = alloc_msg(fmt, ap);
-    //va_end(ap);
 
     if (e->msg == NULL) {
         fprintf(stderr, "Failed to generate error message\n");
@@ -126,8 +125,17 @@ void err_init(ErrorStatus *e) {
 void err_free(ErrorStatus *e) {
     if (e->msg != NULL) {
         free(e->msg);
-        //free(e->payload); // no-op if payload==NULL
+        e->msg = NULL;
     }
+}
+
+/* This function could eventually do something different than err_free. For
+ * example, if err_init eventually mallocs an error object, then we'd want
+ * err_reset to merely free the message string and not free the error object
+ * itself.
+ */
+void err_reset(ErrorStatus *e) {
+    err_free(e);
 }
 
 /*
@@ -152,7 +160,19 @@ void err_show(ErrorStatus *e) {
             break;
     }
     */
-    fprintf(fp, "[ERROR] %s\n", e->msg);
+    if (e->msg != NULL) {
+        fprintf(fp, "[ERROR] %s\n", e->msg);
+    }
+    else {
+        fprintf(fp, "[ERROR] (no message provided)\n");
+    }
+}
+
+void err_show_if_present(ErrorStatus *e) {
+    FILE *fp = stdout;
+    if (e->msg != NULL) {
+        fprintf(fp, "[ERROR] %s\n", e->msg);
+    }
 }
 
 /*
