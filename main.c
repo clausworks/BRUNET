@@ -179,6 +179,7 @@ static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
     for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
         int s = state->userconns[i].sock;
         user_fds[i].fd = (s >= 0) ? s : -1;
+        // TODO: POLLHUP handler shouldn't have to set user_fds.
     }
 
     // Proxy sockets from other peers
@@ -198,6 +199,8 @@ static int connect_to_peers(ConnectivityState *state, ErrorStatus *e) {
     for (int i = 0; i < state->n_peers; ++i) {
         if (state->peers[i].sock >= 0) continue;
         s = attempt_connect(state->peers[i].addr, htons(CF_PROXY_LISTEN_PORT), e);
+        printf("Attempting to connect to %s:%hu\n",
+            inet_ntoa(state->peers[i].addr), CF_PROXY_LISTEN_PORT);
         if (s < 0) {
             err_show(e);
             // TODO: handle fatal errors?
@@ -306,16 +309,20 @@ static int init_connectivity_state(ConnectivityState *state,
 }
 
 static ConnectionType get_fd_conntype(int i) {
-    if (i < 0)
-        return CONNTYPE_INVALID;
+    if (i < 0) {
+        fprintf(stderr, "get_fd_conntype: invalid index\n");
+        exit(EXIT_FAILURE);
+    }
     else if (i < POLL_NUM_LSOCKS)
         return CONNTYPE_LISTEN;
     else if (i < POLL_NUM_LSOCKS + POLL_NUM_USOCKS)
         return CONNTYPE_USER;
     else if (i < POLL_NUM_LSOCKS + POLL_NUM_USOCKS + POLL_NUM_PSOCKS)
         return CONNTYPE_PROXY;
-    else
-        return CONNTYPE_INVALID;
+    else {
+        fprintf(stderr, "get_fd_conntype: invalid index\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
 static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
@@ -380,6 +387,37 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
+/* Error at the connection level that results in an invalid connection. Close
+ * the connection and update the appropriate lists so that it's no longer
+ * polled. TODO: get ACK's for read/write and possibly finish sending/receiving
+ * data.
+ */
+static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int i = fd_i;
+
+    close(fds[fd_i].fd);
+    fds[fd_i].fd = -1;
+
+    switch (get_fd_conntype(fd_i)) {
+    case CONNTYPE_LISTEN:
+        // fatal error
+        err_msg(e, "listening socket failed");
+        return -1;
+    case CONNTYPE_USER:
+        i -= POLL_USOCKS_OFF;
+        state->userconns[i].sock = -1;
+        break;
+    case CONNTYPE_PROXY:
+        i -= POLL_PSOCKS_OFF;
+        state->peers[i].sock = -1;
+        break;
+    }
+    
+    return 0;
+}
+
 static int poll_kitchen_sink(ConnectivityState *state, struct pollfd fds[],
     ErrorStatus fd_errors[], ErrorStatus *main_err) {
 
@@ -415,22 +453,30 @@ static int poll_kitchen_sink(ConnectivityState *state, struct pollfd fds[],
             ErrorStatus *e = &fd_errors[i];
             did_rw = false;
 
+            // No event. Just skip this fd.
+            if (fds[i].revents == 0) {
+                continue;
+            }
+
             // Event: hangup
             if (fds[i].revents & POLLHUP) {
                 --fd_remaining;
                 err_msg(e, "POLLHUP");
+                handle_pollhup(state, fds, i, main_err);
                 continue;
             }
             // Event: fd not open
             else if (fds[i].revents & POLLNVAL) {
                 --fd_remaining;
                 err_msg(e, "POLLNVAL");
+                handle_pollhup(state, fds, i, main_err);
                 continue;
             }
             // Event: other error
             else if (fds[i].revents & POLLERR) {
                 --fd_remaining;
                 err_msg(e, "POLLERR");
+                handle_pollhup(state, fds, i, main_err);
                 continue;
             }
             // Event: readable
@@ -449,7 +495,6 @@ static int poll_kitchen_sink(ConnectivityState *state, struct pollfd fds[],
                 printf("pollout\n");
             }
 
-            // We shouldn't get here normally...
             if (!did_rw) {
                 err_msg(e, "Unhandled event: revents=%x\n", fds[i].revents);
             }
@@ -493,6 +538,10 @@ int main(int argc, char **argv) {
     }
     init_poll_fds(poll_fds, &state);
 
+    for (int i = 0; i < POLL_NUM_FDS; ++i) {
+        err_init(fd_errors + i);
+    }
+
     // DA BIG LOOP
     while (1) {
 
@@ -500,28 +549,21 @@ int main(int argc, char **argv) {
         connect_to_peers(&state, &e); // TODO: handle errors
         update_poll_fds(poll_fds, &state);
 
-        for (int i = 0; i < POLL_NUM_FDS; ++i) {
-            err_init(fd_errors + i);
-        }
-
         // Do everything. Yup, even the kitchen sink.
         if (poll_kitchen_sink(&state, poll_fds, fd_errors, &e) != 0) {
             err_show(&e);
             exit(EXIT_FAILURE);
         }
 
-        // fix
         // Print any errors (TODO: make this more efficient)
         for (int i = 0; i < POLL_NUM_FDS; ++i) {
             err_show_if_present(fd_errors + i);
             err_reset(fd_errors + i);
         }
-        
-        // fix
-        for (int i = 0; i < POLL_NUM_FDS; ++i) {
-            err_free(fd_errors + i);
-        }
+    }
 
+    for (int i = 0; i < POLL_NUM_FDS; ++i) {
+        err_free(fd_errors + i);
     }
 
     err_free(&e);
