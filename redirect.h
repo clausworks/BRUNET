@@ -9,19 +9,35 @@
 typedef enum { ROLE_CLIENT, ROLE_SERVER } ConnectionRole;
 typedef enum { OOB_ENABLE, OOB_DISABLE } OutOfBandStatus;
 //typedef enum { CONN_STORE, CONN_ACTIVE, CONN_CLOSED } ConnectionStatus;
-typedef enum { CONNTYPE_LISTEN, CONNTYPE_USER, CONNTYPE_PROXY } ConnectionType;
+typedef enum {
+    FDTYPE_LISTEN,
+    FDTYPE_USER,
+    FDTYPE_PROXY,
+    FDTYPE_TIMER
+} FDType;
 
 #define RDR_BUF_SIZE 4096
 
 #define POLL_USOCK_IDX 0
 #define POLL_PSOCK_IDX 1
+
 #define POLL_NUM_LSOCKS 2
-#define POLL_NUM_USOCKS CF_MAX_USER_CONNS
-#define POLL_NUM_PSOCKS CF_MAX_DEVICES
-#define POLL_NUM_FDS (POLL_NUM_LSOCKS + POLL_NUM_USOCKS + POLL_NUM_PSOCKS)
+#define POLL_NUM_USOCKS CF_MAX_USER_CONNS // user program connections
+#define POLL_NUM_PSOCKS CF_MAX_DEVICES // proxy sockets
+//#define POLL_NUM_TFDS POLL_NUM_PSOCKS // timer sockets
+#define POLL_NUM_FDS (\
+    POLL_NUM_LSOCKS \
+    + POLL_NUM_USOCKS \
+    + POLL_NUM_PSOCKS \
+    /*+ POLL_NUM_TFDS*/ \
+)
+
 #define POLL_LSOCKS_OFF 0
-#define POLL_USOCKS_OFF POLL_NUM_LSOCKS
-#define POLL_PSOCKS_OFF (POLL_NUM_LSOCKS + POLL_NUM_USOCKS)
+#define POLL_USOCKS_OFF (POLL_LSOCKS_OFF + POLL_NUM_LSOCKS)
+#define POLL_PSOCKS_OFF (POLL_USOCKS_OFF + POLL_NUM_USOCKS)
+//#define POLL_TFDS_OFF (POLL_PSOCKS_OFF + POLL_NUM_PSOCKS)
+
+#define TFD_LEN_SEC 5
 
 /*
 typedef struct {
@@ -58,6 +74,7 @@ typedef struct {
 typedef struct {
     struct in_addr addr;
     int sock;
+    bool waiting; // true if sock represents a timer fd
 } PeerState;
 
 typedef struct {
