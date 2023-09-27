@@ -461,6 +461,9 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
     int so_error;
     socklen_t so_len = sizeof(int);
 
+    // TODO: make this selective?
+    fds[fd_i].events &= ~POLLOUT;
+
     switch(get_fd_type(state, fd_i)) {
         break;
     case FDTYPE_USER:
