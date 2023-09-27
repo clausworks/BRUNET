@@ -124,13 +124,15 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
     struct sockaddr_in serv_addr;
     int status;
 
-    printf("Attempting to connect to %s:%hu\n", inet_ntoa(ip_n), ntohs(port_n));
 
     // initialize socket
     if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
         err_msg_errno(e, "attempt_connect: socket");
         return -1;
     }
+
+    printf("Attempting to connect to %s:%hu (fd=%d)\n", inet_ntoa(ip_n),
+        ntohs(port_n), sock);
 
     if (fcntl(sock, F_SETFL, O_NONBLOCK) < 0) {
         err_msg_errno(e, "attempt_connect: set O_NONBLOCK failed");
@@ -397,6 +399,7 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
         if (s < 0) {
             return -1;
         }
+        close(fds[fd_i].fd); // cancel timer
         fds[fd_i].fd = s;
         fds[fd_i].events = POLLIN | POLLOUT;
         state->peers[i].sock = s;
