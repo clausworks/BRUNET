@@ -46,6 +46,30 @@ void init_sighandlers() {
     }
 }
 
+static void print_sock_info(int s) {
+    struct sockaddr_in local;
+    struct sockaddr_in remote;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    int status = 0;
+
+    if (s < 0) {
+        printf("SOCKET INFO: fd=%d\n", s);
+    }
+
+    status |= getsockname(s, &local, &addrlen);
+    status |= getpeername(s, &remote, &addrlen);
+
+    if (status == 0) {
+        printf("SOCKET INFO: fd=%d, local=%s:%hu, remote=%s:%hu\n",
+            s,
+            inet_ntoa(local.sin_addr), ntohs(local.sin_port),
+            inet_ntoa(remote.sin_addr), ntohs(remote.sin_port));
+    }
+    else {
+        printf("SOCKET INFO: fd=%d\n", s);
+    }
+}
+
 /* Create a socket and start listening on it. Socket will be non-blocking.
  */
 int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
@@ -396,7 +420,7 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
 
     switch(get_fd_type(state, fd_i)) {
     case FDTYPE_LISTEN:
-        printf("Handling FDTYPE_LISTEN\n");
+        printf("FDTYPE_LISTEN POLLIN\n");
         addrlen = sizeof(struct sockaddr_in);
         sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
 
@@ -448,6 +472,7 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
         printf("FDTYPE_PROXY POLLIN\n");
         break;
     case FDTYPE_TIMER:
+        printf("FDTYPE_TIMER POLLIN\n");
         handle_pollin_timer(state, fds, fd_i, e);
         break;
     }
@@ -605,6 +630,8 @@ static int poll_kitchen_sink(ConnectivityState *state, struct pollfd fds[],
             if (fds[i].revents == 0) {
                 continue;
             }
+
+            print_sock_info(fds[i].fd);
 
             // Event: hangup
             if (fds[i].revents & POLLHUP) {
