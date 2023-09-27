@@ -455,6 +455,49 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
+static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int so_error;
+    socklen_t so_len = sizeof(int);
+
+    switch(get_fd_type(state, fd_i)) {
+        break;
+    case FDTYPE_USER:
+        printf("FDTYPE_USER POLLOUT\n");
+        if (getsockopt(fds[fd_i].fd, SOL_SOCKET, SO_ERROR,
+            &so_error, &so_len) < 0) {
+            err_msg_errno(e, "getsockopt: POLLOUT");
+            return -1;
+        }
+        if (so_error) {
+            printf("Error on user socket on POLLOUT\n");
+            //return handle_disconnect(state, fds, fd_i, e);
+        }
+        // TODO: write
+        break;
+    case FDTYPE_PROXY:
+        printf("FDTYPE_PROXY POLLOUT\n");
+        if (getsockopt(fds[fd_i].fd, SOL_SOCKET, SO_ERROR,
+            &so_error, &so_len) < 0) {
+            err_msg_errno(e, "getsockopt: POLLOUT");
+            return -1;
+        }
+        if (so_error) {
+            printf("Error on proxy socket on POLLOUT\n");
+            //return handle_disconnect(state, fds, fd_i, e);
+        }
+        // TODO: write
+        break;
+    case FDTYPE_TIMER:
+    case FDTYPE_LISTEN:
+        printf("unsupported POLLOUT type\n");
+        break;
+    }
+
+    return 0;
+}
+
 static int create_reconnect_timer(ErrorStatus *e) {
     int timerfd;
     struct itimerspec newtime = {0};
@@ -594,7 +637,7 @@ static int poll_kitchen_sink(ConnectivityState *state, struct pollfd fds[],
             if (fds[i].revents & POLLOUT) {
                 --fd_remaining;
                 did_rw = true;
-                printf("pollout\n");
+                handle_pollout(state, fds, i, e);
             }
 
             if (!did_rw) {
