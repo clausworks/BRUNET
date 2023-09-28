@@ -8,7 +8,11 @@
 
 typedef enum { ROLE_CLIENT, ROLE_SERVER } ConnectionRole;
 typedef enum { OOB_ENABLE, OOB_DISABLE } OutOfBandStatus;
-//typedef enum { CONN_STORE, CONN_ACTIVE, CONN_CLOSED } ConnectionStatus;
+typedef enum {
+    PSOCK_INVALID,
+    PSOCK_WAITING,
+    PSOCK_CONNECTED
+} PeerSockStatus;
 typedef enum {
     FDTYPE_LISTEN,
     FDTYPE_USER,
@@ -18,8 +22,8 @@ typedef enum {
 
 #define RDR_BUF_SIZE 4096
 
-#define POLL_USOCK_IDX 0
-#define POLL_PSOCK_IDX 1
+#define POLL_LSOCK_U_IDX 0
+#define POLL_LSOCK_P_IDX 1
 
 #define POLL_NUM_LSOCKS 2
 #define POLL_NUM_USOCKS CF_MAX_USER_CONNS // user program connections
@@ -74,7 +78,7 @@ typedef struct {
 typedef struct {
     struct in_addr addr;
     int sock;
-    bool waiting; // true if sock represents a timer fd
+    PeerSockStatus sock_status; // true if sock represents a timer fd
 } PeerState;
 
 typedef struct {

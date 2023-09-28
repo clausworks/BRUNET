@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <sys/timerfd.h>
+#include <assert.h>
 
 #include "error.h"
 #include "configfile.h"
@@ -181,10 +182,10 @@ static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
     }
 
     // Listen sockets
-    fds[POLL_USOCK_IDX].fd = state->user_lsock;
-    fds[POLL_USOCK_IDX].events = POLLIN;
-    fds[POLL_PSOCK_IDX].fd = state->proxy_lsock;
-    fds[POLL_PSOCK_IDX].events = POLLIN;
+    fds[POLL_LSOCK_U_IDX].fd = state->user_lsock;
+    fds[POLL_LSOCK_U_IDX].events = POLLIN;
+    fds[POLL_LSOCK_P_IDX].fd = state->proxy_lsock;
+    fds[POLL_LSOCK_P_IDX].events = POLLIN;
 
     // Local user program sockets
     for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
@@ -195,7 +196,7 @@ static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
 
     // Proxy sockets from other peers
     for (int i = 0; i < state->n_peers; ++i) {
-        int s = state->peers[i].sock;
+        int s = state->peers[i].sock; // could be real sock or timerfd
         proxy_fds[i].events = POLLIN | POLLOUT;
         proxy_fds[i].fd = (s >= 0) ? s : -1;
     }
@@ -203,8 +204,8 @@ static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
 
 // TODO: update for timers?
 static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
-    struct pollfd *user_fds = fds + POLL_NUM_LSOCKS;
-    struct pollfd *proxy_fds = fds + POLL_NUM_LSOCKS + POLL_NUM_USOCKS;
+    struct pollfd *user_fds = fds + POLL_USOCKS_OFF;
+    struct pollfd *proxy_fds = fds + POLL_PSOCKS_OFF;
 
     // Local user program sockets
     for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
@@ -215,7 +216,7 @@ static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
 
     // Proxy sockets from other peers
     for (int i = 0; i < state->n_peers; ++i) {
-        int s = state->peers[i].sock;
+        int s = state->peers[i].sock; // real sock or timerfd
         proxy_fds[i].fd = (s >= 0) ? s : -1;
     }
 }
@@ -269,7 +270,7 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
     // Store each IP address once in config->pairs
     for (int i = 0; i < config->n_pairs && p < POLL_NUM_PSOCKS; ++i) {
         state->peers[i].sock = -1; // all peers should have invalid socket fd
-        state->peers[i].waiting = false;
+        state->peers[i].sock_status = PSOCK_INVALID;
 
         // Algorithm to find unique IP addresses
         c = config->pairs[i].clnt;
@@ -348,22 +349,22 @@ static FDType get_fd_type(ConnectivityState *state, int i) {
     }
 
     start = POLL_LSOCKS_OFF;
-    end = POLL_LSOCKS_OFF + POLL_NUM_LSOCKS;
+    end = start + POLL_NUM_LSOCKS;
     if (i >= start && i < end) {
         return FDTYPE_LISTEN;
     }
 
     start = POLL_USOCKS_OFF;
-    end = POLL_USOCKS_OFF + POLL_NUM_USOCKS;
+    end = start + POLL_NUM_USOCKS;
     if (i >= start && i < end) {
         return FDTYPE_USER;
     }
 
     start = POLL_PSOCKS_OFF;
-    end = POLL_PSOCKS_OFF + POLL_NUM_PSOCKS;
+    end = start + POLL_NUM_PSOCKS;
     if (i >= start && i < end) {
         int rel_i = i - start;
-        return (state->peers[rel_i].waiting) ? FDTYPE_TIMER : FDTYPE_PROXY;
+        return (state->peers[rel_i].sock_status == PSOCK_WAITING) ? FDTYPE_TIMER : FDTYPE_PROXY;
     }
 
     /*
@@ -403,7 +404,7 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
         fds[fd_i].fd = s;
         fds[fd_i].events = POLLIN | POLLOUT;
         state->peers[i].sock = s;
-        state->peers[i].waiting = false;
+        state->peers[i].sock_status = PSOCK_CONNECTED;
     }
     else {
         err_msg(e, "nonpositive number of timer expirations");
@@ -413,60 +414,102 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-// TODO: update for timers?
-static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
+static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     struct sockaddr_in peer_addr;
     socklen_t addrlen;
     int sock;
+    bool found_peer;
+
+    addrlen = sizeof(struct sockaddr_in);
+    sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
+
+    if (sock < 0) {
+        // Error: discard socket
+        switch (errno) {
+        case EAGAIN:
+        // NOTE: checking for EWOULDBLOCK causes a compilation error since
+        // its value is the same as EAGAIN
+        // case EWOULDBLOCK:
+            printf("accept: no pending connections");
+            return 0; // spurious trigger, not really an error
+        // See accept(2)>return value>error handling: 
+        case ENETDOWN:
+        case EPROTO:
+        case ENOPROTOOPT:
+        case EHOSTDOWN:
+        case ENONET:
+        case EHOSTUNREACH:
+        case EOPNOTSUPP:
+        case ENETUNREACH:
+            err_msg_errno(e, "TCP/IP protocol error");
+            break;
+        case ECONNABORTED:
+            err_msg_errno(e, "connection aborted before accept succeeded");
+            break;
+        default:
+            err_msg_errno(e, "");
+            break;
+        }
+        // In ALL cases, return -1
+        err_msg_prepend(e, "accept: ");
+        return -1;
+    }
+
+    printf("Accepted connection from %s\n", inet_ntoa(peer_addr.sin_addr));
+    print_sock_info(sock);
+
+    // Debug
+    assert(fd_i == POLL_LSOCK_U_IDX || fd_i == POLL_LSOCK_P_IDX);
+
+    switch (fd_i) {
+    case POLL_LSOCK_U_IDX:
+        break; 
+    case POLL_LSOCK_P_IDX:
+        // Loop through peers to find which this connection came from
+        found_peer = false;
+        for (int i = 0; i < state->n_peers; ++i) {
+            if (peer_addr.sin_addr.s_addr == state->peers[i].addr.s_addr) {
+                // Check status of existing socket:
+                // a) It's actually a timer fd. Cancel it.
+                switch (state->peers[i].sock_status) {
+                case PSOCK_WAITING: // timerfd
+                    close(state->peers[i].sock);
+                case PSOCK_INVALID: // never initialized
+                    state->peers[i].sock = sock;
+                    break;
+                case PSOCK_CONNECTED: // already connected
+                    close(sock);
+                    break;
+                }
+            }
+        }
+        if (!found_peer) {
+            err_msg(e, "connection from %s is not a peer (will be closed)",
+                inet_ntoa(peer_addr.sin_addr));
+            return -1;
+        }
+        break;
+    }
+    // TODO: add socket to user_fds
+    // TODO: close sockets when appropriate (and remove from lists)
+    // TODO: reconnect backoff algorithm? Look at TCP/sock options
+    // TODO: check SO_ERROR
+    
+    return 0;
+}
+
+// TODO: update for timers?
+static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
 
     switch(get_fd_type(state, fd_i)) {
     case FDTYPE_LISTEN:
         printf("FDTYPE_LISTEN POLLIN\n");
-        addrlen = sizeof(struct sockaddr_in);
-        sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
-
-        if (sock < 0) {
-            // Error: discard socket
-            switch (errno) {
-            case EAGAIN:
-            // NOTE: checking for EWOULDBLOCK causes a compilation error since
-            // its value is the same as EAGAIN
-            // case EWOULDBLOCK:
-                err_msg_errno(e, "no pending connections");
-                break;
-            // See accept(2)>return value>error handling: 
-            case ENETDOWN:
-            case EPROTO:
-            case ENOPROTOOPT:
-            case EHOSTDOWN:
-            case ENONET:
-            case EHOSTUNREACH:
-            case EOPNOTSUPP:
-            case ENETUNREACH:
-                err_msg_errno(e, "TCP/IP protocol error");
-                break;
-            case ECONNABORTED:
-                err_msg_errno(e, "connection aborted before accept succeeded");
-                break;
-            default:
-                err_msg_errno(e, "");
-                break;
-            }
-            err_msg_prepend(e, "accept: ");
+        if (handle_pollin_listen(state, fds, fd_i, e) < 0) {
             return -1;
         }
-        else {
-            // Accept initiated. Since the listening socket is nonblocking, this
-            // socket will become writable (and will trigger poll) as soon as
-            // the connection completes. See 
-            printf("Accepted conn from %s\n", inet_ntoa(peer_addr.sin_addr));
-        }
-        // TODO: add socket to user_fds
-        // TODO: close sockets when appropriate (and remove from lists)
-        // TODO: reconnect backoff algorithm? Look at TCP/sock options
-        // TODO: check SO_ERROR
         break;
     case FDTYPE_USER:
         printf("FDTYPE_USER POLLIN\n");
@@ -476,7 +519,9 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
         break;
     case FDTYPE_TIMER:
         printf("FDTYPE_TIMER POLLIN\n");
-        handle_pollin_timer(state, fds, fd_i, e);
+        if (handle_pollin_timer(state, fds, fd_i, e) < 0) {
+            return -1;
+        }
         break;
     }
 
@@ -587,14 +632,14 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         state->peers[i].sock = s;
         fds[fd_i].fd = s;
         fds[fd_i].events = POLLIN; // TODO: change this back at retry
-        state->peers[i].waiting = true;
+        state->peers[i].sock_status = PSOCK_WAITING;
         break;
     }
     
     return 0;
 }
 
-static int poll_kitchen_sink(ConnectivityState *state, struct pollfd fds[],
+static int poll_once(ConnectivityState *state, struct pollfd fds[],
     ErrorStatus fd_errors[], ErrorStatus *main_err) {
 
     int poll_status;
@@ -720,15 +765,14 @@ int main(int argc, char **argv) {
         err_init(fd_errors + i);
     }
 
-    // DA BIG LOOP
     connect_to_peers(&state, &e); // TODO: handle errors
+
     while (1) {
 
         // TODO: logical connections
         update_poll_fds(poll_fds, &state); // TODO: update based off `changed`
 
-        // Do everything. Yup, even the kitchen sink.
-        if (poll_kitchen_sink(&state, poll_fds, fd_errors, &e) != 0) {
+        if (poll_once(&state, poll_fds, fd_errors, &e) != 0) {
             err_show(&e);
             exit(EXIT_FAILURE);
         }
