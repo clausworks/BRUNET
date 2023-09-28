@@ -471,6 +471,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
         found_peer = false;
         for (int i = 0; i < state->n_peers; ++i) {
             if (peer_addr.sin_addr.s_addr == state->peers[i].addr.s_addr) {
+                found_peer = true;
                 // Check status of existing socket:
                 // a) It's actually a timer fd. Cancel it.
                 switch (state->peers[i].sock_status) {
