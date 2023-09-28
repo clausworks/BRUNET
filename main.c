@@ -53,6 +53,12 @@ static void print_sock_info(int s) {
     socklen_t addrlen = sizeof(struct sockaddr_in);
     int status = 0;
 
+    char localstr[16] = {0};
+    char remotestr[16] = {0};
+
+    memset(&local, 0, sizeof(struct sockaddr_in));
+    memset(&remote, 0, sizeof(struct sockaddr_in));
+
     if (s < 0) {
         printf("SOCKET INFO: fd=%d\n", s);
     }
@@ -61,10 +67,13 @@ static void print_sock_info(int s) {
     status |= getpeername(s, &remote, &addrlen);
 
     if (status == 0) {
+        strcpy(localstr, inet_ntoa(local.sin_addr));
+        strcpy(remotestr, inet_ntoa(remote.sin_addr));
+
         printf("SOCKET INFO: fd=%d, local=%s:%hu, remote=%s:%hu\n",
             s,
-            inet_ntoa(local.sin_addr), ntohs(local.sin_port),
-            inet_ntoa(remote.sin_addr), ntohs(remote.sin_port));
+            localstr, ntohs(local.sin_port),
+            remotestr, ntohs(remote.sin_port));
     }
     else {
         printf("SOCKET INFO: fd=%d\n", s);
