@@ -634,8 +634,8 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-// TODO: update for timers?
-static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
+
+static int handle_pollin_proxy(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     int so_error;
@@ -643,52 +643,87 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     char buf[4096];
     ssize_t read_len;
 
+    if (getsockopt(fds[fd_i].fd, SOL_SOCKET, SO_ERROR,
+        &so_error, &so_len) < 0) {
+        err_msg_errno(e, "getsockopt: POLLIN");
+        return -1;
+    }
+    if (so_error) {
+        printf("Error on user socket on POLLIN\n");
+        return handle_disconnect(state, fds, fd_i, e);
+    }
+
+    memset(buf, 0, sizeof(buf));
+    read_len = read(fds[fd_i].fd, buf, sizeof(buf));
+    // EOF
+    if (read_len == 0) {
+        printf("Read to EOF (fd=%d)\n", fds[fd_i].fd);
+        return handle_disconnect(state, fds, fd_i, e);
+    }
+    // Error
+    else if (read_len < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            printf("Read return < 0\n");
+            err_msg_errno(e, "read returned < 0");
+            handle_disconnect(state, fds, fd_i, e);
+            return -1;
+        }
+        else {
+            printf("Faulty trigger for pollin\n");
+        }
+    }
+    // Normal
+    else {
+        printf("%d bytes read: [%s]\n", read_len, buf);
+    }
+
+    return 0;
+}
+
+static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    char buf[4096];
+    ssize_t read_len;
+
+    memset(buf, 0, sizeof(buf));
+    read_len = read(fds[fd_i].fd, buf, sizeof(buf));
+    if (read_len == 0) {
+        printf("Read to EOF (fd=%d)\n", fds[fd_i].fd);
+        return handle_disconnect(state, fds, fd_i, e);
+    }
+    else if (read_len < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            printf("Read return < 0\n");
+            err_msg_errno(e, "read returned < 0");
+            handle_disconnect(state, fds, fd_i, e);
+            return -1;
+        }
+        else {
+            printf("Faulty trigger for pollin\n");
+        }
+    }
+
+    return 0;
+}
+
+// TODO: update for timers?
+static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
     switch(get_fd_type(state, fd_i)) {
     case FDTYPE_LISTEN:
         printf("FDTYPE_LISTEN POLLIN\n");
-        if (handle_pollin_listen(state, fds, fd_i, e) < 0) {
-            return -1;
-        }
-        break;
+        return handle_pollin_listen(state, fds, fd_i, e);
     case FDTYPE_USER:
         printf("FDTYPE_USER POLLIN\n");
-        break;
+        return handle_pollin_user(state, fds, fd_i, e);
     case FDTYPE_PROXY:
         printf("FDTYPE_PROXY POLLIN\n");
-        if (getsockopt(fds[fd_i].fd, SOL_SOCKET, SO_ERROR,
-            &so_error, &so_len) < 0) {
-            err_msg_errno(e, "getsockopt: POLLIN");
-            return -1;
-        }
-        if (so_error) {
-            printf("Error on user socket on POLLIN\n");
-            return handle_disconnect(state, fds, fd_i, e);
-        }
-
-        read_len = read(fds[fd_i].fd, buf, sizeof(buf));
-        if (read_len == 0) {
-            printf("Read to EOF (fd=%d)\n", fds[fd_i].fd);
-            return handle_disconnect(state, fds, fd_i, e);
-        }
-        else if (read_len < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                printf("Read return < 0\n");
-                err_msg_errno(e, "read returned < 0");
-                handle_disconnect(state, fds, fd_i, e);
-                return -1;
-            }
-            else {
-                printf("Faulty trigger for pollin\n");
-            }
-        }
-
-        break;
+        return handle_pollin_proxy(state, fds, fd_i, e);
     case FDTYPE_TIMER:
         printf("FDTYPE_TIMER POLLIN\n");
-        if (handle_pollin_timer(state, fds, fd_i, e) < 0) {
-            return -1;
-        }
-        break;
+        return handle_pollin_timer(state, fds, fd_i, e);
     }
 
     return 0;

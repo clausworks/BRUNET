@@ -44,24 +44,6 @@ typedef enum {
 
 #define TFD_LEN_SEC 5
 
-/*
-typedef struct {
-    char buf[RDR_BUF_SIZE];
-    size_t w; // next position to write to
-    size_t r; // next position to read from (next byte to send)
-    size_t a; // next byte to be acked (oldest unacknowledged byte)
-} RdrBuf;
-
-typedef struct {
-    Connection conn;
-    ConnectionRole role;
-    ConnectionStatus status;
-    int sock_local;
-    int sock_remote;
-    RdrBuf buf;
-} ConnectionState;
-*/
-
 /* Logical connection */
 typedef struct {
     struct in_addr clnt;
@@ -81,10 +63,6 @@ typedef struct {
     int sock;
     PeerSockStatus sock_status; // true if sock represents a timer fd
 } PeerState;
-
-typedef struct {
-    int sock;
-} UserProgState;
 
 typedef struct {
     int user_lsock; // sock to get connections to user programs
