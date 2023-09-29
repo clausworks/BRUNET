@@ -344,8 +344,8 @@ static int init_connectivity_state(ConnectivityState *state,
         state->userconns[i].sock = -1;
     }
 
-    state->changed.peers = false;
-    state->changed.userconns = false;
+    //state->changed.peers = false;
+    //state->changed.userconns = false;
 
     return 0;
 }
@@ -489,6 +489,55 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
+static int handle_new_userconn(ConnectivityState *state, int sock, ErrorStatus *e) {
+    static unsigned _next_inst = 0;
+
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    LogConn lc = {0};
+    bool stored_lc;
+
+    if (getpeername(sock, &addr, &addrlen) < 0) {
+        err_msg_errno(e, "create_new_logconn: getpeername");
+        return -1;
+    }
+    lc.clnt = addr.sin_addr;
+
+    // New logical connection
+    printf("New logical connection\n");
+    if (getsockopt(sock, IPPROTO_IP, SO_ORIGINAL_DST,
+        &addr, &addrlen) < 0) {
+        err_msg_errno(e, "getsockopt: SO_ORIGINAL_DST");
+        return -1;
+    }
+    lc.serv = addr.sin_addr;
+    lc.serv_port = addr.sin_port;
+
+    printf("Original socket destination: %s:%hu\n",
+        inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+
+    lc.inst = _next_inst++;
+    lc.sock = sock;
+
+    // Find first available slot
+    stored_lc = false;
+    for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
+        if (state->userconns[i].sock < 0) {
+            state->userconns[i] = lc;
+            stored_lc = true;
+        }
+    }
+
+    if (!stored_lc) {
+        close(sock);
+        err_msg(e, "Number of user connections exceeded max (%d)",
+            POLL_NUM_USOCKS);
+        return -1;
+    }
+
+    return 0;
+}
+
 static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -496,11 +545,15 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     socklen_t addrlen;
     int sock;
     bool found_peer;
-    struct sockaddr_in orig_daddr;
-    socklen_t so_len = sizeof(struct sockaddr_in);
 
     addrlen = sizeof(struct sockaddr_in);
     sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
+
+    // Set nonblocking
+    if (fcntl(sock, F_SETFL, O_NONBLOCK) < 0) {
+        err_msg_errno(e, "handle_pollin_listen: fcntl O_NONBLOCK");
+        return -1;
+    }
 
     if (sock < 0) {
         // Error: discard socket
@@ -542,15 +595,9 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
 
     switch (fd_i) {
     case POLL_LSOCK_U_IDX:
-        // New logical connection
-        printf("New logical connection\n");
-        if (getsockopt(sock, IPPROTO_IP, SO_ORIGINAL_DST,
-            &orig_daddr, &so_len) < 0) {
-            err_msg_errno(e, "getsockopt: SO_ORIGINAL_DST");
+        if (handle_new_userconn(state, sock, e) < 0) {
             return -1;
         }
-        printf("Original socket destination: %s:%hu\n",
-            inet_ntoa(orig_daddr.sin_addr), ntohs(orig_daddr.sin_port));
         break; 
     case POLL_LSOCK_P_IDX:
         // Loop through peers to find which this connection came from
@@ -566,10 +613,6 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
                     close(state->peers[i].sock);
                     // (no break)
                 case PSOCK_INVALID: // never initialized
-                    if (fcntl(sock, F_SETFL, O_NONBLOCK) < 0) {
-                        err_msg_errno(e, "handle_pollin_listen: fcntl");
-                        return -1;
-                    }
                     state->peers[i].sock = sock;
                     state->peers[i].sock_status = PSOCK_CONNECTED;
                     // TODO: ensure fds are updated

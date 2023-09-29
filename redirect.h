@@ -92,10 +92,12 @@ typedef struct {
     PeerState peers[POLL_NUM_PSOCKS]; // peers in system, with sockets
     int n_peers;
     LogConn userconns[POLL_NUM_USOCKS]; // active (tracked) connections w/ user programs
+    /*
     struct changed {
         bool peers; // true if peers array has been changed
         bool userconns; // true if userconns has been changed
     } changed;
+    */
     //int n_userconns;
 } ConnectivityState;
 
