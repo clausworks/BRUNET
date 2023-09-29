@@ -539,6 +539,8 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
 
     switch (fd_i) {
     case POLL_LSOCK_U_IDX:
+        // New logical connection
+        printf("New logical connection\n");
         break; 
     case POLL_LSOCK_P_IDX:
         // Loop through peers to find which this connection came from
