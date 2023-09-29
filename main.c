@@ -486,10 +486,17 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
                 switch (state->peers[i].sock_status) {
                 case PSOCK_WAITING: // timerfd
                     close(state->peers[i].sock);
+                    // (no break)
                 case PSOCK_INVALID: // never initialized
+                    if (fcntl(sock, F_SETFL, O_NONBLOCK) < 0) {
+                        err_msg_errno(e, "handle_pollin_listen: fcntl");
+                        return -1;
+                    }
                     state->peers[i].sock = sock;
+                    state->peers[i].sock_status = PSOCK_CONNECTED;
                     break;
                 case PSOCK_CONNECTED: // already connected
+                    printf("Already connected to peer: closing sock %d\n", sock);
                     close(sock);
                     break;
                 }
