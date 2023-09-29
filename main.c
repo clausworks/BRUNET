@@ -495,7 +495,6 @@ static int handle_new_userconn(ConnectivityState *state, int sock, ErrorStatus *
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(struct sockaddr_in);
     LogConn lc = {0};
-    bool stored_lc;
 
     if (getpeername(sock, &addr, &addrlen) < 0) {
         err_msg_errno(e, "create_new_logconn: getpeername");
@@ -520,22 +519,18 @@ static int handle_new_userconn(ConnectivityState *state, int sock, ErrorStatus *
     lc.sock = sock;
 
     // Find first available slot
-    stored_lc = false;
     for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
         if (state->userconns[i].sock < 0) {
             state->userconns[i] = lc;
-            stored_lc = true;
+            return 0;
         }
     }
 
-    if (!stored_lc) {
-        close(sock);
-        err_msg(e, "Number of user connections exceeded max (%d)",
-            POLL_NUM_USOCKS);
-        return -1;
-    }
-
-    return 0;
+    // If we got here, no slots in userconns were available
+    close(sock);
+    err_msg(e, "Number of user connections exceeded max (%d)",
+        POLL_NUM_USOCKS);
+    return -1;
 }
 
 static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
