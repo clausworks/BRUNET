@@ -422,6 +422,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
 
     // Close socket
     close(fds[fd_i].fd);
+    printf("Closed socket (fd=%d)\n", fds[fd_i].fd);
 
     switch (get_fd_type(state, fd_i)) {
     case FDTYPE_LISTEN:
@@ -657,7 +658,7 @@ static int handle_pollin_proxy(ConnectivityState *state, struct pollfd fds[],
     read_len = read(fds[fd_i].fd, buf, sizeof(buf));
     // EOF
     if (read_len == 0) {
-        printf("Read to EOF (fd=%d)\n", fds[fd_i].fd);
+        printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
         return handle_disconnect(state, fds, fd_i, e);
     }
     // Error
@@ -690,7 +691,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     read_len = read(fds[fd_i].fd, buf, sizeof(buf));
     // EOF
     if (read_len == 0) {
-        printf("Read to EOF (fd=%d)\n", fds[fd_i].fd);
+        printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
         return handle_disconnect(state, fds, fd_i, e);
     }
     // Error
@@ -787,13 +788,15 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
 static int poll_once(ConnectivityState *state, struct pollfd fds[],
     ErrorStatus fd_errors[], ErrorStatus *main_err) {
 
+    static unsigned _poll_num_iter = 0;
+
     int poll_status;
     bool did_rw;
     int fd_remaining;
 
-    printf("poll blocking... ");
+    printf("\n\n========== POLL ========== #%u\n", _poll_num_iter++);
     poll_status = poll(fds, POLL_NUM_FDS, -1);
-    printf("returned %d\n", poll_status);
+    printf("(poll returned: %d fds)\n", poll_status);
 
     // Handle errors
     if (poll_status <= -1) {
@@ -824,6 +827,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 continue;
             }
 
+            printf("\nProcessing socket:\n");
             print_sock_info(fds[i].fd);
 
             // Event: hangup
