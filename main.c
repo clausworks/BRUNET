@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <sys/timerfd.h>
 #include <assert.h>
+#include <linux/netfilter_ipv4.h>
 
 #include "error.h"
 #include "configfile.h"
@@ -495,6 +496,8 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     socklen_t addrlen;
     int sock;
     bool found_peer;
+    struct sockaddr_in orig_daddr;
+    socklen_t so_len = sizeof(struct sockaddr_in);
 
     addrlen = sizeof(struct sockaddr_in);
     sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
@@ -541,6 +544,13 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     case POLL_LSOCK_U_IDX:
         // New logical connection
         printf("New logical connection\n");
+        if (getsockopt(sock, IPPROTO_IP, SO_ORIGINAL_DST,
+            &orig_daddr, &so_len) < 0) {
+            err_msg_errno(e, "getsockopt: SO_ORIGINAL_DST");
+            return -1;
+        }
+        printf("Original socket destination: %s:%hu\n",
+            inet_ntoa(orig_daddr.sin_addr), ntohs(orig_daddr.sin_port));
         break; 
     case POLL_LSOCK_P_IDX:
         // Loop through peers to find which this connection came from
