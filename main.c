@@ -419,9 +419,8 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     int i; // relative index into approprate state->* array
     int s;
 
-    // Close socket. Nullify slot in pollfd list.
+    // Close socket
     close(fds[fd_i].fd);
-    fds[fd_i].fd = -1;
 
     switch (get_fd_type(state, fd_i)) {
     case FDTYPE_LISTEN:
@@ -591,6 +590,8 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
 
     int so_error;
     socklen_t so_len = sizeof(int);
+    char buf[4096];
+    ssize_t read_len;
 
     switch(get_fd_type(state, fd_i)) {
     case FDTYPE_LISTEN:
@@ -613,6 +614,24 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
             printf("Error on user socket on POLLIN\n");
             return handle_disconnect(state, fds, fd_i, e);
         }
+
+        read_len = read(fds[fd_i].fd, buf, sizeof(buf));
+        if (read_len == 0) {
+            printf("Read to EOF (fd=%d)\n", fds[fd_i].fd);
+            return handle_disconnect(state, fds, fd_i, e);
+        }
+        else if (read_len < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                printf("Read return < 0\n");
+                err_msg_errno(e, "read returned < 0");
+                handle_disconnect(state, fds, fd_i, e);
+                return -1;
+            }
+            else {
+                printf("Faulty trigger for pollin\n");
+            }
+        }
+
         break;
     case FDTYPE_TIMER:
         printf("FDTYPE_TIMER POLLIN\n");
