@@ -11,6 +11,7 @@ typedef enum { OOB_ENABLE, OOB_DISABLE } OutOfBandStatus;
 typedef enum {
     PSOCK_INVALID,
     PSOCK_WAITING,
+    PSOCK_CONNECTING,
     PSOCK_CONNECTED
 } PeerSockStatus;
 typedef enum {

@@ -218,15 +218,13 @@ static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
 
     // Local user program sockets
     for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
-        int s = state->userconns[i].sock;
-        user_fds[i].fd = (s >= 0) ? s : -1;
+        user_fds[i].fd = state->userconns[i].sock;
         // TODO: POLLHUP handler shouldn't have to set user_fds.
     }
 
     // Proxy sockets from other peers
     for (int i = 0; i < state->n_peers; ++i) {
-        int s = state->peers[i].sock; // real sock or timerfd
-        proxy_fds[i].fd = (s >= 0) ? s : -1;
+        proxy_fds[i].fd = state->peers[i].sock;
     }
 }
 
@@ -247,6 +245,7 @@ static int connect_to_peers(ConnectivityState *state, ErrorStatus *e) {
             // FIXME DO SOMETHING HERE...
         }
         state->peers[i].sock = s;
+        state->peers[i].sock_status = PSOCK_CONNECTING;
     }
 
     return 0;
@@ -388,6 +387,70 @@ static FDType get_fd_type(ConnectivityState *state, int i) {
     exit(EXIT_FAILURE);
 }
 
+static int create_reconnect_timer(ErrorStatus *e) {
+    int timerfd;
+    struct itimerspec newtime = {0};
+
+    newtime.it_interval.tv_sec = 0; // Don't repeat.
+    newtime.it_value.tv_sec = TFD_LEN_SEC;
+
+    timerfd = timerfd_create(CLOCK_BOOTTIME, TFD_NONBLOCK);
+    if (timerfd < 0) {
+        err_msg_errno(e, "timerfd_create");
+        return -1;
+    }
+
+    if (timerfd_settime(timerfd, 0, &newtime, NULL) < 0) {
+        err_msg_errno(e, "timerfd_settime");
+        return -1;
+    }
+
+    return timerfd;
+}
+
+/* Error at the connection level that results in an invalid connection. Close
+ * the connection and update the appropriate lists so that it's no longer
+ * polled. TODO: get ACK's for read/write and possibly finish sending/receiving
+ * data.
+ */
+static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int i; // relative index into approprate state->* array
+    int s;
+
+    // Close socket. Nullify slot in pollfd list.
+    close(fds[fd_i].fd);
+    fds[fd_i].fd = -1;
+
+    switch (get_fd_type(state, fd_i)) {
+    case FDTYPE_LISTEN:
+        // fatal error
+        err_msg(e, "listening socket failed");
+        return -1;
+    case FDTYPE_TIMER:
+        // fatal error
+        err_msg(e, "timer fd failed");
+        return -1;
+    case FDTYPE_USER:
+        i = fd_i - POLL_USOCKS_OFF;
+        state->userconns[i].sock = -1;
+        break;
+    case FDTYPE_PROXY:
+        // Instead of setting sock as invalid, set timer for reconnect
+        i = fd_i - POLL_PSOCKS_OFF;
+        if ((s = create_reconnect_timer(e)) < 0) {
+            return -1; // fatal error
+        }
+        fds[fd_i].events = POLLIN; // TODO: change this back at retry
+        state->peers[i].sock = s;
+        state->peers[i].sock_status = PSOCK_WAITING;
+        break;
+    }
+    
+    return 0;
+}
+
 static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
     
@@ -408,12 +471,14 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
         s = attempt_connect(state->peers[i].addr, htons(CF_PROXY_LISTEN_PORT), e);
         if (s < 0) {
             return -1;
+            // TODO: set interval on timer to repeat (auto retry)
         }
-        close(fds[fd_i].fd); // cancel timer
-        fds[fd_i].fd = s;
+        close(state->peers[i].sock); // cancel timer
+        // When connect succeeds, POLLOUT will be triggered.
+        // This will be the case even if it has already succeeded.
         fds[fd_i].events = POLLIN | POLLOUT;
         state->peers[i].sock = s;
-        state->peers[i].sock_status = PSOCK_CONNECTED;
+        state->peers[i].sock_status = PSOCK_CONNECTING;
     }
     else {
         err_msg(e, "nonpositive number of timer expirations");
@@ -485,6 +550,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
                 // a) It's actually a timer fd. Cancel it.
                 switch (state->peers[i].sock_status) {
                 case PSOCK_WAITING: // timerfd
+                case PSOCK_CONNECTING: // not yet connected
                     close(state->peers[i].sock);
                     // (no break)
                 case PSOCK_INVALID: // never initialized
@@ -494,6 +560,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
                     }
                     state->peers[i].sock = sock;
                     state->peers[i].sock_status = PSOCK_CONNECTED;
+                    // TODO: ensure fds are updated
                     break;
                 case PSOCK_CONNECTED: // already connected
                     printf("Already connected to peer: closing sock %d\n", sock);
@@ -550,6 +617,7 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
 
     int so_error;
     socklen_t so_len = sizeof(int);
+    int i;
 
     // TODO: make this selective?
     fds[fd_i].events &= ~POLLOUT;
@@ -578,8 +646,10 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
         }
         if (so_error) {
             printf("Error on proxy socket on POLLOUT\n");
-            //return handle_disconnect(state, fds, fd_i, e);
+            return handle_disconnect(state, fds, fd_i, e);
         }
+        i = fd_i - POLL_PSOCKS_OFF;
+        state->peers[i].sock_status = PSOCK_CONNECTED;
         // TODO: write
         break;
     case FDTYPE_TIMER:
@@ -588,71 +658,6 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
         break;
     }
 
-    return 0;
-}
-
-static int create_reconnect_timer(ErrorStatus *e) {
-    int timerfd;
-    struct itimerspec newtime = {0};
-
-    newtime.it_interval.tv_sec = 0; // Don't repeat.
-    newtime.it_value.tv_sec = TFD_LEN_SEC;
-
-    timerfd = timerfd_create(CLOCK_BOOTTIME, TFD_NONBLOCK);
-    if (timerfd < 0) {
-        err_msg_errno(e, "timerfd_create");
-        return -1;
-    }
-
-    if (timerfd_settime(timerfd, 0, &newtime, NULL) < 0) {
-        err_msg_errno(e, "timerfd_settime");
-        return -1;
-    }
-
-    return timerfd;
-}
-
-/* Error at the connection level that results in an invalid connection. Close
- * the connection and update the appropriate lists so that it's no longer
- * polled. TODO: get ACK's for read/write and possibly finish sending/receiving
- * data.
- */
-static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
-    int fd_i, ErrorStatus *e) {
-
-    int i = fd_i; // relative index into approprate state->* array
-    int s;
-
-    // Close socket. Nullify slot in pollfd list.
-    close(fds[fd_i].fd);
-    fds[fd_i].fd = -1;
-
-    switch (get_fd_type(state, fd_i)) {
-    case FDTYPE_LISTEN:
-        // fatal error
-        err_msg(e, "listening socket failed");
-        return -1;
-    case FDTYPE_TIMER:
-        // fatal error
-        err_msg(e, "timer fd failed");
-        return -1;
-    case FDTYPE_USER:
-        i -= POLL_USOCKS_OFF;
-        state->userconns[i].sock = -1;
-        break;
-    case FDTYPE_PROXY:
-        // Instead of setting sock as invalid, set timer for reconnect
-        i -= POLL_PSOCKS_OFF;
-        if ((s = create_reconnect_timer(e)) < 0) {
-            return -1; // fatal error
-        }
-        state->peers[i].sock = s;
-        fds[fd_i].fd = s;
-        fds[fd_i].events = POLLIN; // TODO: change this back at retry
-        state->peers[i].sock_status = PSOCK_WAITING;
-        break;
-    }
-    
     return 0;
 }
 
@@ -785,8 +790,8 @@ int main(int argc, char **argv) {
     connect_to_peers(&state, &e); // TODO: handle errors
 
     while (1) {
-
         // TODO: logical connections
+        // TODO: do we need this any more? Functionality duplicated
         update_poll_fds(poll_fds, &state); // TODO: update based off `changed`
 
         if (poll_once(&state, poll_fds, fd_errors, &e) != 0) {
@@ -807,62 +812,6 @@ int main(int argc, char **argv) {
 
     err_free(&e);
     printf("Done :)\n");
-
-    // TASKS
-    // Poll
-    // a. New connections
-    // b. Data to read/write
-    // Update poll fds
-
-    /*
-    while (1) { 
-        ErrorStatus err_listen;
-        err_init(&err_listen);
-        int errsock;
-
-        if ((errsock = poll_lsocks(listen_fds, peers, user_programs, &err_listen)) < 0) {
-            errsock *= -1;
-            err_msg_prepend(&err_listen, "poll_lsocks (sock=%d): ", errsock);
-            err_show(&err_listen);
-            exit(EXIT_FAILURE); // TODO: remove
-        }
-
-        // TODO: Attempt to CONNECT to peers -> sockets
-        // 1. Go through managed connections
-        for (int i = 0; i < config.n_pairs; ++i) {
-            int s;
-            ManagedPair *p = &(config.pairs[i]);
-            if (p->clnt.s_addr == config.this_dev.s_addr) {
-                if ((s = attempt_connect(p->serv, htons(CF_PROXY_LISTEN_PORT))) < 0) {
-                    printf("Failed to connect to %s:%hu\n",
-                        inet_ntoa(p->serv), CF_PROXY_LISTEN_PORT);
-                }
-                else {
-                    printf("Connected to %s:%hu\n", inet_ntoa(p->serv), CF_PROXY_LISTEN_PORT);
-                }
-            }
-        }
-        // FWD: go through any peers which are not paired with this host
-        // Also, go through any peers which are not part of any connection
-
-        // 2. Connect to each
-
-        // TODO: ACCEPT any new connections -> sockets
-
-        // TODO: poll sockets
-        
-
-        // POLL HANDLER:
-        // On POLLIN,
-        // 1. From proxy socket: parse packet header
-        //   - data packet -> read payload & cache
-        //   - cmd packet -> read cmd & do action (ack, end connection, etc.)
-        // 2. From user socket: read data
-        // 3. From a listening socket
-        // On POLLOUT, write whole packet (if data is cached)
-        // On error, update socket list(s)
-    }
-    */
 
     if (rs_cleanup() != 0) {
         fprintf(stderr, "Failed to cleanup nft ruleset\n");
