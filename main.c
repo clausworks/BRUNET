@@ -688,10 +688,12 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
 
     memset(buf, 0, sizeof(buf));
     read_len = read(fds[fd_i].fd, buf, sizeof(buf));
+    // EOF
     if (read_len == 0) {
         printf("Read to EOF (fd=%d)\n", fds[fd_i].fd);
         return handle_disconnect(state, fds, fd_i, e);
     }
+    // Error
     else if (read_len < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
             printf("Read return < 0\n");
@@ -702,6 +704,10 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
         else {
             printf("Faulty trigger for pollin\n");
         }
+    }
+    // Normal
+    else {
+        printf("%d bytes read: [%s]\n", read_len, buf);
     }
 
     return 0;
