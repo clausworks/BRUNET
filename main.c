@@ -438,6 +438,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         break;
     case FDTYPE_PROXY:
         // Instead of setting sock as invalid, set timer for reconnect
+        // TODO: attempt reconnect immediately
         i = fd_i - POLL_PSOCKS_OFF;
         if ((s = create_reconnect_timer(e)) < 0) {
             return -1; // fatal error
@@ -588,6 +589,9 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
 static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
+    int so_error;
+    socklen_t so_len = sizeof(int);
+
     switch(get_fd_type(state, fd_i)) {
     case FDTYPE_LISTEN:
         printf("FDTYPE_LISTEN POLLIN\n");
@@ -600,6 +604,15 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
         break;
     case FDTYPE_PROXY:
         printf("FDTYPE_PROXY POLLIN\n");
+        if (getsockopt(fds[fd_i].fd, SOL_SOCKET, SO_ERROR,
+            &so_error, &so_len) < 0) {
+            err_msg_errno(e, "getsockopt: POLLIN");
+            return -1;
+        }
+        if (so_error) {
+            printf("Error on user socket on POLLIN\n");
+            return handle_disconnect(state, fds, fd_i, e);
+        }
         break;
     case FDTYPE_TIMER:
         printf("FDTYPE_TIMER POLLIN\n");
