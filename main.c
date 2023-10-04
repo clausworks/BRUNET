@@ -19,6 +19,7 @@
 #include "ruleset.h"
 #include "redirect.h"
 #include "cache.h"
+#include "dict.h"
 
 
 void sighandler_cleanup(int sig) {
@@ -172,13 +173,6 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
 
     return sock;
 }
-
-#ifdef __TEST
-void test() {
-    printf("Running global test function...\n\n\n");
-    __test_caching();
-}
-#endif
 
 static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
     struct pollfd *user_fds = fds + POLL_USOCKS_OFF;
@@ -490,7 +484,11 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-static int handle_new_userconn(ConnectivityState *state, int sock, ErrorStatus *e) {
+static int register_logconn(ConnectivityState *state, int sock, ErrorStatus *e) {
+    return -1;
+}
+
+static int create_logconn(ConnectivityState *state, int sock, ErrorStatus *e) {
     static unsigned _next_inst = 0;
 
     struct sockaddr_in addr;
@@ -877,6 +875,15 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
 }
 
 
+#ifdef __TEST
+void test() {
+    printf("Running global test function...\n\n\n");
+    __test_dict();
+    //__test_caching();
+}
+#endif
+
+
 int main(int argc, char **argv) {
     ErrorStatus e;
     ConfigFileParams config;
@@ -948,3 +955,5 @@ int main(int argc, char **argv) {
     return 0;
 #endif
 }
+
+

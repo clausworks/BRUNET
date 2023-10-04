@@ -46,6 +46,7 @@ typedef enum {
 
 /* Logical connection */
 typedef struct {
+    // TODO: add some identifier
     struct in_addr clnt;
     struct in_addr serv;
     in_port_t serv_port;
@@ -54,8 +55,13 @@ typedef struct {
     // There maybe old data from old connections sitting around in the system,
     // and the original sock may have been closed and reused by a new
     // connection.
-    int sock; // LogConn is invalid if sock < 0
+    int sock; // LogConn is invalid if sock < 0 FIXME: see note below
+    // Note:
+    // If LC is local (localhost is client/server), then store sock.  Otherwise,
+    // sock=-1 (because we don't need it).  In all cases, store fds/references for
+    // both cache files.
 } LogConn;
+
 
 /* Peer */
 typedef struct {
