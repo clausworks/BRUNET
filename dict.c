@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
+#include <stdbool.h>
 
 #include "error.h"
 #include "dict.h"
@@ -29,7 +30,7 @@ int dict_insert(Dict *d, dictkey_t key, void *value, ErrorStatus *e) {
 
     d->buckets[b] = new;
 
-    printf("DICT: inserted node %u at bucket %u\n", key, b);
+    printf("DICT: inserted node %llu at bucket %u\n", key, b);
 
     return 0;
 }
@@ -93,7 +94,7 @@ void *dict_pop(Dict *d, dictkey_t key, ErrorStatus *e) {
     }
     free(node);
 
-    printf("DICT: removed node %u at bucket %u\n", key, b);
+    printf("DICT: removed node %llu at bucket %u\n", key, b);
 
     return value;
 }
@@ -116,7 +117,23 @@ Dict *dict_create(ErrorStatus *e) {
 }
 
 void dict_free(Dict *d) {
-    // TODO: free all nodes
+    DictNode *n, *old;
+    bool freed_nodes;
+    for (int i = 0; i < d->n_buckets; ++i) {
+        n = d->buckets[i];
+        while (n->next != NULL) {
+            old = n;
+            n = n->next;
+            free(old);
+            freed_nodes = true;
+        }
+        free(n); // n is last node
+    }
+
+    if (freed_nodes) {
+        printf("Warning: freed Dict had elements in it (possible memory leak)\n");
+    }
+
     free(d->buckets);
     free(d);
 }

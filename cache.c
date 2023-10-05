@@ -10,6 +10,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/mman.h>
+#include <stdbool.h>
 
 #include "redirect.h"
 #include "error.h"
@@ -17,6 +18,7 @@
 #include "configfile.h"
 #include "util.h"
 
+static bool _global_cache_init = false;
 static long long _page_bytes = -1;
 static long long _blk_bytes = -1;
 
@@ -82,7 +84,7 @@ static int _cachefile_expand(CacheFileHeader *f, ErrorStatus *e) {
     return -2;
 }
 
-static void _cachefile_init(CacheFileHeader *f, struct in_addr peers[], int n_peers) {
+static void _cachefile_init(CacheFileHeader *f,/* struct in_addr peers[],*/ int n_peers) {
     const int num_blks = CACHE_DEFAULT_PAGES * CACHE_BLK_PER_PAGE;
     CacheFileBlock *b;
     long long off;
@@ -134,7 +136,7 @@ static void _cachefile_init(CacheFileHeader *f, struct in_addr peers[], int n_pe
     f->ack = f->write;
 
     // Peer IP addresses
-    memcpy(f->peers, peers, n_peers*sizeof(struct in_addr));
+    //memcpy(f->peers, peers, n_peers*sizeof(struct in_addr));
     f->n_peers = n_peers;
 }
 
@@ -197,15 +199,18 @@ static int _extend_active_list(CacheFileHeader *f, ErrorStatus *e) {
  * write head. Write will continue into additional free blocks as necessary. The
  * file will be expanded to create additional free blocks if none are left.
  */
-int cachefile_write(CacheFileHeader *f, char *buf, long long buflen,
+int cachefile_write(CacheFileHeader *f, char *buf, int buflen,
     ErrorStatus *e) {
 
     char *write_head; // byte pointer for memcpy
     long long empty; // empty bytes in current block
     long long nbytes; // number of bytes to copy
-    long long remaining = buflen; // bytes remaining to be written
+    long long remaining; // bytes remaining to be written
     long long written = 0;
     int status;
+
+    assert(buflen > 0);
+    remaining = buflen;
 
     while (remaining > 0) {
         // We always write to the tail block. A new block is only appended (and
@@ -250,7 +255,7 @@ int cachefile_write(CacheFileHeader *f, char *buf, long long buflen,
  *
  * Returns: the number of bytes read, or -1 on error.
  */
-int cachefile_read(CacheFileHeader *f, struct in_addr peer, char *buf,
+int cachefile_read(CacheFileHeader *f, /*struct in_addr peer*/ int peer_id, char *buf,
     int buflen, ErrorStatus *e) {
 
     char *read_head;
@@ -265,6 +270,9 @@ int cachefile_read(CacheFileHeader *f, struct in_addr peer, char *buf,
     assert(buflen > 0);
 
     // Find peer read offset from IP
+    assert(peer_id >= 0 && peer_id < f->n_peers);
+    p = peer_id;
+    /*
     for (int i = 0; i < f->n_peers; ++i)
         if (peer.s_addr == f->peers[i].s_addr)
             p = i;
@@ -276,6 +284,7 @@ int cachefile_read(CacheFileHeader *f, struct in_addr peer, char *buf,
     else {
         printf("Sending to peer: %s\n", inet_ntoa(peer));
     }
+    */
 
     // Loop until
     //   (a) no more space in read buffer
@@ -284,6 +293,7 @@ int cachefile_read(CacheFileHeader *f, struct in_addr peer, char *buf,
         // check for
         // - end of block
         // - write head
+        // TODO: set max limit on read (less than signed int max)
         read_head = _off_to_byteptr(f, f->read[p]); // for memcpy
         blk_off = f->read[p] / _blk_bytes * _blk_bytes; // get base offset of current block
         
@@ -321,6 +331,7 @@ int cachefile_read(CacheFileHeader *f, struct in_addr peer, char *buf,
 
 int cachefile_ack(CacheFileHeader *f) {
     // TODO: stub
+    fprintf(stderr, "### cachefile_ack: function stub\n");
     return -1;
 }
 
@@ -341,14 +352,18 @@ void cache_global_init() {
     }
     _page_bytes = ps;
     _blk_bytes = ps / CACHE_BLK_PER_PAGE;
+    _global_cache_init = true;
 }
 
-static int _gen_fname(LogConn *c, char *fname, char *suffix, ErrorStatus *e) {
+static int _gen_fname(dictkey_t lc_id, char *fname, char *suffix, ErrorStatus *e) {
     int n;
     memset(fname, 0, CACHE_FNAME_SIZE);
-    n = snprintf(fname, CACHE_FNAME_SIZE, "%08x-%08x-%04hx_%02x_%s.cache",
-        ntohl(c->clnt.s_addr), ntohl(c->serv.s_addr),
-        ntohs(c->serv_port), c->inst, suffix);
+    n = snprintf(fname, CACHE_FNAME_SIZE, "%016llx-%s.cache", lc_id, suffix);
+
+    //n = snprintf(fname, CACHE_FNAME_SIZE, "%08x-%08x-%04hx_%02x_%s.cache",
+        //ntohl(c->clnt.s_addr), ntohl(c->serv.s_addr),
+        //ntohs(c->serv_port), c->inst, suffix);
+        
     if (n >= CACHE_FNAME_SIZE) {
         err_msg(e, "filename too long");
         return -1;
@@ -357,7 +372,8 @@ static int _gen_fname(LogConn *c, char *fname, char *suffix, ErrorStatus *e) {
 }
 
 // Returns fd, -1 on error
-static int _create_file(LogConn *c, char *fname, ErrorStatus *e) {
+static int _create_file(char *fname, ErrorStatus *e) {
+    // TODO: check these options
     int fd = open(fname, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
     if (fd < 0) {
         //err_msg_errno(e, "open (%s)", fname);
@@ -375,28 +391,30 @@ static int _create_file(LogConn *c, char *fname, ErrorStatus *e) {
 
 /* Populate a Cache object for the provided logical connection.
  */
-int cache_init(Cache *cache, LogConn *c, struct in_addr peers[], int n_peers, ErrorStatus *e) {
+int cache_init(Cache *cache, dictkey_t lc_id, /*struct in_addr peers[], */int n_peers, ErrorStatus *e) {
     // Create a new cache files for a connection (fwd, bkwd)
     char fname[CACHE_FNAME_SIZE];
     CacheFileHeader *f;
+
+    assert(_global_cache_init == true);
 
     memset(cache, 0, sizeof(Cache));
 
     // TODO: try O_TMPFILE
 
     // FORWARD DIRECTION
-    if (_gen_fname(c, fname, "fwd", e) < 0) {
+    if (_gen_fname(lc_id, fname, "fwd", e) < 0) {
         err_msg_prepend(e, "fname fwd: ");
         return -1;
     }
-    cache->fwd.fd = _create_file(c, fname, e);
+    cache->fwd.fd = _create_file(fname, e);
     if (cache->fwd.fd < 0) { return -1; }
     // BACKWARD DIRECTION
-    if (_gen_fname(c, fname, "bkwd", e) < 0) {
+    if (_gen_fname(lc_id, fname, "bkwd", e) < 0) {
         err_msg_prepend(e, "fname bkwd: ");
         return -1;
     }
-    cache->bkwd.fd = _create_file(c, fname, e);
+    cache->bkwd.fd = _create_file(fname, e);
     if (cache->bkwd.fd < 0) { return -1; }
 
     f = mmap(0, CACHE_DEFAULT_PAGES * _page_bytes,
@@ -405,7 +423,7 @@ int cache_init(Cache *cache, LogConn *c, struct in_addr peers[], int n_peers, Er
         err_msg_errno(e, "mmap failed (fwd)");
         return -1;
     }
-    _cachefile_init(f, peers, n_peers);
+    _cachefile_init(f, n_peers);//, peers, n_peers);
     cache->fwd.mmap_base = f;
 
     f = mmap(0, CACHE_DEFAULT_PAGES * _page_bytes,
@@ -414,7 +432,7 @@ int cache_init(Cache *cache, LogConn *c, struct in_addr peers[], int n_peers, Er
         err_msg_errno(e, "mmap failed (bkwd)");
         return -1;
     }
-    _cachefile_init(f, peers, n_peers);
+    _cachefile_init(f, n_peers);//, peers, n_peers);
     cache->bkwd.mmap_base = f;
 
     return 0;
