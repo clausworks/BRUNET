@@ -13,6 +13,7 @@
 #include <sys/timerfd.h>
 #include <assert.h>
 #include <linux/netfilter_ipv4.h>
+#include <stddef.h>
 
 #include "error.h"
 #include "configfile.h"
@@ -221,11 +222,14 @@ static FDType get_fd_type(ConnectivityState *state, int i) {
  * LOGICAL CONNECTION DICTIONARY FUNCTIONS
  */
 
-dictkey_t lc_to_key(LogConn *lc) {
-    dictkey_t key;
-    key = lc->clnt.s_addr; // upper 32 bits
-    key <<= 32;
-    return key;
+void lc_set_id(LogConn *lc, unsigned peer_id) {
+    assert(peer_id < (1<<LC_ID_PEERBITS));
+    assert(lc->inst < (1<<LC_ID_INSTBITS));
+    assert(peer_id < POLL_NUM_PSOCKS);
+
+    lc->id = peer_id;
+    lc->id = lc->id << (LC_ID_INSTBITS);
+    lc->id |= lc->inst;
 }
 
 
@@ -328,7 +332,7 @@ static int connect_to_peers(ConnectivityState *state, ErrorStatus *e) {
  *
  * Returns: number of (nonnegative) file descriptors added to peer_fds.
  */
-int _peer_compare(const void *a, const void *b) {
+int _peer_compare_addr(const void *a, const void *b) {
     PeerState *pa = (PeerState *)a;
     PeerState *pb = (PeerState *)b;
 
@@ -390,7 +394,7 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
     printf("Found %d peers\n", p);
 
     // Sort peers list
-    qsort(state->peers, state->n_peers, sizeof(PeerState), _peer_compare);
+    qsort(state->peers, state->n_peers, sizeof(PeerState), _peer_compare_addr);
 }
 
 static int init_connectivity_state(ConnectivityState *state,
@@ -544,12 +548,14 @@ static int handle_new_userconn(ConnectivityState *state, int sock, ErrorStatus *
 
     static unsigned _next_inst = 0;
 
-    struct sockaddr_in localaddr, origaddr;
+    struct sockaddr_in clntaddr, servaddr;
     socklen_t addrlen = sizeof(struct sockaddr_in);
     LogConn *lc;
-    dictkey_t key;
+    PeerState *result;
+    PeerState dummy;
+    ptrdiff_t peer_id;
 
-    if (getpeername(sock, &localaddr, &addrlen) < 0) {
+    if (getpeername(sock, &clntaddr, &addrlen) < 0) {
         err_msg_errno(e, "create_new_logconn: getpeername");
         return -1;
     }
@@ -557,29 +563,39 @@ static int handle_new_userconn(ConnectivityState *state, int sock, ErrorStatus *
     // New logical connection
     printf("New logical connection\n");
     if (getsockopt(sock, IPPROTO_IP, SO_ORIGINAL_DST,
-        &origaddr, &addrlen) < 0) {
+        &servaddr, &addrlen) < 0) {
         err_msg_errno(e, "getsockopt: SO_ORIGINAL_DST");
         return -1;
     }
 
     lc = malloc(sizeof(LogConn));
 
-    lc->clnt = localaddr.sin_addr;
-    lc->serv = origaddr.sin_addr;
-    lc->serv_port = origaddr.sin_port;
+    lc->clnt = clntaddr.sin_addr;
+    lc->serv = servaddr.sin_addr;
+    lc->serv_port = servaddr.sin_port;
 
     printf("Original socket destination: %s:%hu\n",
-        inet_ntoa(origaddr.sin_addr), ntohs(origaddr.sin_port));
+        inet_ntoa(servaddr.sin_addr), ntohs(servaddr.sin_port));
 
     lc->inst = _next_inst++;
 
-    // Init cache
-    cache_init(&lc->cache, lc_to_key(lc), state->n_peers, e);
 
-    key = lc_to_key(lc); 
+    dummy.addr = clntaddr.sin_addr;
+    result = bsearch(&dummy, state->peers, state->n_peers,
+        sizeof(PeerState), _peer_compare_addr);
+    if (result == NULL) {
+        err_msg(e, "Could not obtain index of peer %s",
+            inet_ntoa(clntaddr.sin_addr));
+        return -1;
+    }
+    peer_id = result - state->peers;
+    lc_set_id(lc, peer_id);
+
+    // Init cache
+    cache_init(&lc->cache, lc->id, state->n_peers, e);
 
     // Add LC to dictionary
-    if (dict_insert(state->logconns, key, lc, e) < 0) {
+    if (dict_insert(state->logconns, lc->id, lc, e) < 0) {
         err_msg_prepend(e, "handle_new_userconn: ");
         return -1;
     }
@@ -588,7 +604,7 @@ static int handle_new_userconn(ConnectivityState *state, int sock, ErrorStatus *
     for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
         if (state->userconns[i].sock < 0) {
             // Key used to lookup LC in dict
-            state->userconns[i].key = key;
+            state->userconns[i].lc_id = lc->id;
             state->userconns[i].sock = sock;
             return 0;
         }
@@ -596,10 +612,54 @@ static int handle_new_userconn(ConnectivityState *state, int sock, ErrorStatus *
 
     // If we got here, no slots in userconns were available
     close(sock);
-    dict_pop(state->logconns, key, e);
+    dict_pop(state->logconns, lc->id, e);
     err_msg(e, "Number of user connections exceeded max (%d)",
         POLL_NUM_USOCKS);
     return -1;
+}
+
+
+static int handle_peer_conn(ConnectivityState *state, int sock,
+    struct sockaddr_in *peer_addr, ErrorStatus *e) {
+
+    PeerState *result;
+    PeerState dummy = {.addr = peer_addr->sin_addr};
+    ptrdiff_t i;
+
+    result = bsearch(&dummy, state->peers, state->n_peers,
+        sizeof(PeerState), _peer_compare_addr);
+    if (result == NULL) {
+        err_msg(e, "connection from %s is not a peer (will be closed)",
+            inet_ntoa(peer_addr->sin_addr));
+        return -1;
+    }
+    i = result - state->peers; // get index
+
+    // Check status of existing socket:
+    // a) It's actually a timer fd. Cancel it.
+    // TODO finish description?
+    switch (state->peers[i].sock_status) {
+    case PSOCK_WAITING: // timerfd
+    case PSOCK_CONNECTING: // not yet connected
+        close(state->peers[i].sock);
+        // (no break)
+    case PSOCK_INVALID: // never initialized
+        state->peers[i].sock = sock;
+        state->peers[i].sock_status = PSOCK_CONNECTED;
+        // TODO: ensure fds are updated
+        break;
+    case PSOCK_CONNECTED: // already connected
+        printf("Already connected to peer: closing sock %d\n", sock);
+        close(sock);
+        return 0;
+    case PSOCK_THIS_DEVICE:
+        assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
+        //err_msg(e, "peer connection from this device");
+        //close(sock);
+        //return -1;
+        break;
+    }
+    return 0;
 }
 
 static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
@@ -608,9 +668,10 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     struct sockaddr_in peer_addr;
     socklen_t addrlen;
     int sock;
-    bool found_peer;
 
     addrlen = sizeof(struct sockaddr_in);
+
+    // Accept
     sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
 
     // Set nonblocking
@@ -619,6 +680,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
 
+    // Handle errors
     if (sock < 0) {
         // Error: discard socket
         switch (errno) {
@@ -665,38 +727,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
         break; 
     case POLL_LSOCK_P_IDX:
         // Loop through peers to find which this connection came from
-        found_peer = false;
-        for (int i = 0; i < state->n_peers; ++i) {
-            if (peer_addr.sin_addr.s_addr == state->peers[i].addr.s_addr) {
-                found_peer = true;
-                // Check status of existing socket:
-                // a) It's actually a timer fd. Cancel it.
-                switch (state->peers[i].sock_status) {
-                case PSOCK_WAITING: // timerfd
-                case PSOCK_CONNECTING: // not yet connected
-                    close(state->peers[i].sock);
-                    // (no break)
-                case PSOCK_INVALID: // never initialized
-                    state->peers[i].sock = sock;
-                    state->peers[i].sock_status = PSOCK_CONNECTED;
-                    // TODO: ensure fds are updated
-                    break;
-                case PSOCK_CONNECTED: // already connected
-                    printf("Already connected to peer: closing sock %d\n", sock);
-                    close(sock);
-                    return 0;
-                case PSOCK_THIS_DEVICE:
-                    assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
-                    //err_msg(e, "peer connection from this device");
-                    //close(sock);
-                    //return -1;
-                    break;
-                }
-            }
-        }
-        if (!found_peer) {
-            err_msg(e, "connection from %s is not a peer (will be closed)",
-                inet_ntoa(peer_addr.sin_addr));
+        if (handle_peer_conn(state, sock, &peer_addr, e) < 0) {
             return -1;
         }
         break;

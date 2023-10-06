@@ -6,11 +6,18 @@
 #include "error.h"
 #include "dict.h"
 
-unsigned dict_hash(Dict *d, dictkey_t key) {
-    return key % d->n_buckets;
+unsigned dict_hash(Dict *d, unsigned key) {
+    const unsigned LARGE_PRIME = 0xDA316A91;
+    unsigned index;
+    char xor = 0xFF & key;
+    xor ^= 0xFF & (key >> 8);
+    xor ^= 0xFF & (key >> 16);
+    xor ^= 0xFF & (key >> 24);
+    index = ((unsigned)xor) * LARGE_PRIME;
+    return index % d->n_buckets;
 }
 
-int dict_insert(Dict *d, dictkey_t key, void *value, ErrorStatus *e) {
+int dict_insert(Dict *d, unsigned key, void *value, ErrorStatus *e) {
     unsigned b = dict_hash(d, key);
     DictNode *head;
     DictNode *new;
@@ -30,12 +37,12 @@ int dict_insert(Dict *d, dictkey_t key, void *value, ErrorStatus *e) {
 
     d->buckets[b] = new;
 
-    printf("DICT: inserted node %llu at bucket %u\n", key, b);
+    printf("DICT: inserted node %u at bucket %u\n", key, b);
 
     return 0;
 }
 
-void *dict_get(Dict *d, dictkey_t key, ErrorStatus *e) {
+void *dict_get(Dict *d, unsigned key, ErrorStatus *e) {
     unsigned b = dict_hash(d, key);
     DictNode *node;
 
@@ -56,7 +63,7 @@ void *dict_get(Dict *d, dictkey_t key, ErrorStatus *e) {
     return node->value;
 }
 
-void *dict_pop(Dict *d, dictkey_t key, ErrorStatus *e) {
+void *dict_pop(Dict *d, unsigned key, ErrorStatus *e) {
     unsigned b = dict_hash(d, key);
     void *value;
     DictNode *head;
@@ -94,7 +101,7 @@ void *dict_pop(Dict *d, dictkey_t key, ErrorStatus *e) {
     }
     free(node);
 
-    printf("DICT: removed node %llu at bucket %u\n", key, b);
+    printf("DICT: removed node %u at bucket %u\n", key, b);
 
     return value;
 }
@@ -106,7 +113,7 @@ Dict *dict_create(ErrorStatus *e) {
         return NULL;
     }
 
-    d->n_buckets = DICT_DEFAULT_SIZE;
+    d->n_buckets = DICT_NUM_BUCKETS;
     d->buckets = calloc(d->n_buckets, sizeof(DictNode *));
     if (d->buckets == NULL) {
         err_msg_errno(e, "dict_create: calloc");

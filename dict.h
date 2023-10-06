@@ -4,11 +4,11 @@
 #include <stdint.h>
 #include "error.h"
 
-typedef uint32_t dictkey_t;
+//typedef uint32_t unsigned;
 //typedef value_t void *;
 
 typedef struct dictnode {
-    dictkey_t key;
+    unsigned key;
     void *value;
     struct dictnode *next;
 } DictNode;
@@ -18,13 +18,13 @@ typedef struct {
     unsigned n_buckets;
 } Dict;
 
-int dict_insert(Dict *, dictkey_t, void *, ErrorStatus *);
-void *dict_get(Dict *, dictkey_t, ErrorStatus *);
-void *dict_pop(Dict *, dictkey_t, ErrorStatus *);
+int dict_insert(Dict *, unsigned, void *, ErrorStatus *);
+void *dict_get(Dict *, unsigned, ErrorStatus *);
+void *dict_pop(Dict *, unsigned, ErrorStatus *);
 Dict *dict_create(ErrorStatus *);
 void dict_free(Dict *);
 
-#define DICT_DEFAULT_SIZE 16
+#define DICT_NUM_BUCKETS 64
 
 void __test_dict(void);
 

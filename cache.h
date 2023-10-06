@@ -2,6 +2,7 @@
 #define CACHE_H
 
 #include "configfile.h"
+#include "error.h"
 
 #define CACHE_FNAME_SIZE 256
 #define CACHE_MAX_PAGES 4096
@@ -40,7 +41,7 @@ typedef struct {
 } Cache;
 
 void cache_global_init(void);
-int cache_init(Cache *, dictkey_t, int, ErrorStatus *);
+int cache_init(Cache *, unsigned, int, ErrorStatus *);
 int cache_close(Cache *, ErrorStatus *e);
 int cachefile_read(CacheFileHeader *f, int, char *, int, ErrorStatus *);
 int cachefile_write(CacheFileHeader *f, char *, int, ErrorStatus *);

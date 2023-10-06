@@ -48,28 +48,17 @@ typedef enum {
 #define LC_ID_BITS 32
 #define LC_ID_PEERBITS 4 // NOTE: number of bits to store CF_MAX_DEVICES-1
 #define LC_ID_INSTBITS (LC_ID_BITS - LC_ID_PEERBITS)
-#define MAX_USER_CONNS_LIFETIME (1 << 
+//#define MAX_USER_CONNS_LIFETIME (1 << 
 
 #define TFD_LEN_SEC 5
 
 /* Logical connection */
 typedef struct {
-    // TODO: add some identifier
+    unsigned id;
     struct in_addr clnt;
     struct in_addr serv;
     in_port_t serv_port;
-    unsigned inst; // TODO: can we just use sock as an identifier?
-    // No, because inst needs to be unique for the duration of the program.
-    // There maybe old data from old connections sitting around in the system,
-    // and the original sock may have been closed and reused by a new
-    // connection.
-    
-    //int sock; // LogConn is invalid if sock < 0 FIXME: see note below
-    // Note:
-    // If LC is local (localhost is client/server), then store sock.  Otherwise,
-    // sock=-1 (because we don't need it).  In all cases, store fds/references for
-    // both cache files.
-    
+    unsigned inst;
     Cache cache;
 } LogConn;
 
@@ -84,7 +73,7 @@ typedef struct {
 /* User connection: a TCP connection to a local user program */
 typedef struct {
     int sock;
-    dictkey_t key;
+    unsigned lc_id;
 } UserConnState;
 
 typedef struct {

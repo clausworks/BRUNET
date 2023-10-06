@@ -355,10 +355,10 @@ void cache_global_init() {
     _global_cache_init = true;
 }
 
-static int _gen_fname(dictkey_t lc_id, char *fname, char *suffix, ErrorStatus *e) {
+static int _gen_fname(unsigned lc_id, char *fname, char *suffix, ErrorStatus *e) {
     int n;
     memset(fname, 0, CACHE_FNAME_SIZE);
-    n = snprintf(fname, CACHE_FNAME_SIZE, "%016llx-%s.cache", lc_id, suffix);
+    n = snprintf(fname, CACHE_FNAME_SIZE, "%016x-%s.cache", lc_id, suffix);
 
     //n = snprintf(fname, CACHE_FNAME_SIZE, "%08x-%08x-%04hx_%02x_%s.cache",
         //ntohl(c->clnt.s_addr), ntohl(c->serv.s_addr),
@@ -391,7 +391,7 @@ static int _create_file(char *fname, ErrorStatus *e) {
 
 /* Populate a Cache object for the provided logical connection.
  */
-int cache_init(Cache *cache, dictkey_t lc_id, /*struct in_addr peers[], */int n_peers, ErrorStatus *e) {
+int cache_init(Cache *cache, unsigned lc_id, /*struct in_addr peers[], */int n_peers, ErrorStatus *e) {
     // Create a new cache files for a connection (fwd, bkwd)
     char fname[CACHE_FNAME_SIZE];
     CacheFileHeader *f;
