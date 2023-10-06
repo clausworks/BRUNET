@@ -255,6 +255,9 @@ static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
     struct pollfd *user_fds = fds + POLL_USOCKS_OFF;
     struct pollfd *peer_fds = fds + POLL_PSOCKS_OFF;
 
+    assert(fds[POLL_LSOCK_U_IDX].events == POLLIN);
+    assert(fds[POLL_LSOCK_P_IDX].events == POLLIN);
+
     // Local user program sockets
     for (int i = 0; i < POLL_NUM_USOCKS; ++i) {
         user_fds[i].fd = state->userconns[i].sock;
