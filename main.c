@@ -343,54 +343,43 @@ int _peer_compare_addr(const void *a, const void *b) {
     return ((int)pa->addr.s_addr - (int)pb->addr.s_addr);
 }
 
+static void add_peer(ConnectivityState *state, int *p,
+    struct in_addr addr, struct in_addr this_dev) {
+    bool found = false;
+    for (int j = 0; j < *p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
+        if (addr.s_addr == state->peers[j].addr.s_addr) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        state->peers[*p].addr = addr;
+        state->peers[*p].sock = -1; 
+        if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
+            state->peers[*p].sock_status = PSOCK_THIS_DEVICE;
+        }
+        else {
+            state->peers[*p].sock_status = PSOCK_INVALID;
+        }
+
+        printf("Added peer %s\n", inet_ntoa(addr));
+        *p += 1;
+    }
+}
+
 static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
-    struct in_addr this = config->this_dev;
     struct in_addr c; // current client addr
     struct in_addr s; // current server addr
     int p = 0; // index into state->peers
-    bool found;
 
     // Glean peer IP addresses from managed client/server pairs
     // Store each IP address once in config->pairs
     for (int i = 0; i < config->n_pairs && p < POLL_NUM_PSOCKS; ++i) {
-        state->peers[i].sock = -1; // all peers should have invalid socket fd
-        state->peers[i].sock_status = PSOCK_INVALID;
-
         // Find unique IP addresses
         c = config->pairs[i].clnt;
         s = config->pairs[i].serv;
-
-        found = false;
-        for (int j = 0; j < p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
-            if (c.s_addr == state->peers[j].addr.s_addr) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            state->peers[p].addr = c;
-            printf("Added peer %s\n", inet_ntoa(c));
-            if (c.s_addr == this.s_addr) { // IP is not actually a peer
-                state->peers[p].sock_status = PSOCK_THIS_DEVICE;
-            }
-            ++p;
-        }
-
-        found = false;
-        for (int j = 0; j < p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
-            if (s.s_addr == state->peers[j].addr.s_addr) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            state->peers[p].addr = s;
-            printf("Added peer %s\n", inet_ntoa(s));
-            if (c.s_addr == this.s_addr) { // IP is not actually a peer
-                state->peers[p].sock_status = PSOCK_THIS_DEVICE;
-            }
-            ++p;
-        }
+        add_peer(state, &p, c, config->this_dev);
+        add_peer(state, &p, s, config->this_dev);
     }
     
     state->n_peers = p;
