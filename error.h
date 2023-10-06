@@ -27,4 +27,8 @@ void err_reset(ErrorStatus *);
 void err_show(ErrorStatus *);
 void err_show_if_present(ErrorStatus *);
 
+#ifdef __TEST
+void __test_error(void);
+#endif
+
 #endif

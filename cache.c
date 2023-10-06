@@ -358,7 +358,7 @@ void cache_global_init() {
 static int _gen_fname(unsigned lc_id, char *fname, char *suffix, ErrorStatus *e) {
     int n;
     memset(fname, 0, CACHE_FNAME_SIZE);
-    n = snprintf(fname, CACHE_FNAME_SIZE, "%016x-%s.cache", lc_id, suffix);
+    n = snprintf(fname, CACHE_FNAME_SIZE, "%08x-%s.cache", lc_id, suffix);
 
     //n = snprintf(fname, CACHE_FNAME_SIZE, "%08x-%08x-%04hx_%02x_%s.cache",
         //ntohl(c->clnt.s_addr), ntohl(c->serv.s_addr),
@@ -471,6 +471,15 @@ int cache_sync(Cache *cache, ErrorStatus *e) {
  */
 
 #ifdef __TEST
+void __lc_set_id(LogConn *lc, unsigned inst, unsigned clnt_id) {
+    assert(clnt_id < (1<<LC_ID_PEERBITS));
+    assert(inst < (1<<LC_ID_INSTBITS));
+    assert(clnt_id < POLL_NUM_PSOCKS);
+
+    lc->id = clnt_id;
+    lc->id = lc->id << (LC_ID_INSTBITS);
+    lc->id |= inst;
+}
 
 void __print_cfhdr(CacheFileHeader *f) {
     printf("\nCACHE FILE (@%p)\n", f);
@@ -479,8 +488,7 @@ void __print_cfhdr(CacheFileHeader *f) {
     printf("    act_tl:  %llx (%lld)\n", f->act_tl, f->act_tl);
     printf("    read (n_peers = %d):\n", f->n_peers);
     for (int i = 0; i < f->n_peers; ++i) {
-        printf("      %15s %llx (%lld)\n",
-            inet_ntoa(f->peers[i]), f->read[i], f->read[i]);
+        printf("      %d: %llx (%lld)\n", i, f->read[i], f->read[i]);
     }
     printf("    write:  %llx (%lld)\n", f->write, f->write);
     printf("    ack:    %llx (%lld)\n", f->ack, f->ack);
@@ -534,7 +542,6 @@ void __print_ll(char *prefix, CacheFileHeader *f, long long head) {
 static int __test_caching_1() {
     struct in_addr ipA, ipB;
     ErrorStatus e;
-    struct in_addr peers[CF_MAX_DEVICES];
     int n_peers;
     Cache cache;
     LogConn lc1;
@@ -543,16 +550,11 @@ static int __test_caching_1() {
 
     err_init(&e);
 
-    inet_aton("10.0.0.1", &ipA);
-    inet_aton("10.0.0.2", &ipB);
-    lc1.clnt = ipA;
-    lc1.serv = ipB;
-    lc1.serv_port = htons(1234);
-    lc1.inst = 0;
-    peers[0] = ipB;
-    n_peers = 1;
+    inet_aton("10.0.0.1", &lc1.clnt);
+    __lc_set_id(&lc1, 0, 0);
+    n_peers = 2;
 
-    if (cache_init(&cache, &lc1, peers, n_peers, &e) < 0) {
+    if (cache_init(&cache, lc1.id, n_peers, &e) < 0) {
         err_show(&e);
         return -1;
     }
@@ -564,9 +566,7 @@ static int __test_caching_1() {
 }
 
 static int __test_caching_2() {
-    struct in_addr ipA, ipB;
     ErrorStatus e;
-    struct in_addr peers[CF_MAX_DEVICES];
     int n_peers;
     Cache cache;
     LogConn lc1;
@@ -575,19 +575,15 @@ static int __test_caching_2() {
     int status;
     CacheFileHeader *f;
 
-    printf("\n[__test_caching_3()]\n");
+    printf("\n[__test_caching_2()]\n");
 
     err_init(&e);
 
-    inet_aton("10.0.0.1", &ipA);
-    inet_aton("10.0.0.2", &ipB);
-    lc1.clnt = ipA;
-    lc1.serv = ipB;
-    lc1.serv_port = htons(1234);
-    peers[0] = ipB;
-    n_peers = 1;
+    inet_aton("10.0.0.1", &lc1.clnt);
+    __lc_set_id(&lc1, 0, 0);
+    n_peers = 2;
 
-    if (cache_init(&cache, &lc1, peers, n_peers, &e) < 0) {
+    if (cache_init(&cache, lc1.id, n_peers, &e) < 0) {
         err_show(&e);
         return -1;
     }
@@ -603,7 +599,7 @@ static int __test_caching_2() {
     __print_cfhdr(f);
     __print_blk(f, f->act_tl);
 
-    status = cachefile_read(f, ipB, rbuf, 256, &e);
+    status = cachefile_read(f, 1, rbuf, 256, &e);
     hex_dump("read result", rbuf, 256, 16);
     if (status < 0) {
         err_show(&e);
@@ -617,9 +613,7 @@ static int __test_caching_2() {
 }
 
 static int __test_caching_3() {
-    struct in_addr ipA, ipB;
     ErrorStatus e;
-    struct in_addr peers[CF_MAX_DEVICES];
     int n_peers;
     Cache cache;
     LogConn lc1;
@@ -632,16 +626,11 @@ static int __test_caching_3() {
 
     err_init(&e);
 
-    inet_aton("10.0.0.1", &ipA);
-    inet_aton("10.0.0.2", &ipB);
-    lc1.clnt = ipA;
-    lc1.serv = ipB;
-    lc1.serv_port = htons(1234);
-    lc1.inst = 0;
-    peers[0] = ipB;
-    n_peers = 1;
+    inet_aton("10.0.0.1", &lc1.clnt);
+    __lc_set_id(&lc1, 0, 0);
+    n_peers = 2;
 
-    if (cache_init(&cache, &lc1, peers, n_peers, &e) < 0) {
+    if (cache_init(&cache, lc1.id, n_peers, &e) < 0) {
         err_show(&e);
         return -1;
     }
@@ -669,7 +658,7 @@ static int __test_caching_3() {
     __print_blk(f, f->act_tl);
     __print_blk_contents(f, f->act_tl);
 
-    status = cachefile_read(f, ipB, rbuf, 5000, &e);
+    status = cachefile_read(f, 1, rbuf, 5000, &e);
     hex_dump("rbuf", rbuf, 5000, 32);
     if (status < 0) {
         err_show(&e);
@@ -706,16 +695,11 @@ static int __test_caching_4(int nbytes) {
 
     err_init(&e);
 
-    inet_aton("10.0.0.1", &ipA);
-    inet_aton("10.0.0.2", &ipB);
-    lc1.clnt = ipA;
-    lc1.serv = ipB;
-    lc1.serv_port = htons(1234);
-    lc1.inst = 0;
-    peers[0] = ipB;
-    n_peers = 1;
+    inet_aton("10.0.0.1", &lc1.clnt);
+    __lc_set_id(&lc1, 0, 0);
+    n_peers = 2;
 
-    if (cache_init(&cache, &lc1, peers, n_peers, &e) < 0) {
+    if (cache_init(&cache, lc1.id, n_peers, &e) < 0) {
         err_show(&e);
         return -1;
     }
@@ -733,7 +717,7 @@ static int __test_caching_4(int nbytes) {
     }
 
     // read
-    status = cachefile_read(f, ipB, rbuf, nbytes, &e);
+    status = cachefile_read(f, 1, rbuf, nbytes, &e);
     if (status < 0) {
         err_show(&e);
         return -1;

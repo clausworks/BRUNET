@@ -11,11 +11,16 @@ typedef struct dictnode {
     unsigned key;
     void *value;
     struct dictnode *next;
+    struct dictnode *next_;
+    struct dictnode *prev_;
 } DictNode;
 
 typedef struct {
     DictNode **buckets;
     unsigned n_buckets;
+    DictNode *head_;
+    DictNode *tail_;
+    DictNode *iter_;
 } Dict;
 
 int dict_insert(Dict *, unsigned, void *, ErrorStatus *);

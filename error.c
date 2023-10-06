@@ -71,40 +71,61 @@ void err_msg(ErrorStatus *e, char *fmt, ...) {
 
 void err_msg_prepend(ErrorStatus *e, char *fmt, ...) {
     char *prefix;
-    char *old;
     va_list ap;
+    unsigned nbytes1, nbytes2;
 
     va_start(ap, fmt);
     prefix = alloc_msg(fmt, ap);
     va_end(ap);
 
     if (prefix == NULL) {
-        fprintf(stderr, "Failed to prepend to error message\n");
+        perror("err_msg_prepend (malloc)\n");
         exit(EXIT_FAILURE);
     }
 
-    old = e->msg; // to free
-    err_msg(e, "%s%s", prefix, e->msg); // reassigns e->msg
-    free(old);
+    // Prepend prefix to e->msg
+    nbytes1 = strlen(prefix);
+    nbytes2 = strlen(e->msg) + 1; // +1 for null char
+    prefix = realloc(prefix, nbytes1 + nbytes2);
+    if (prefix == NULL) {
+        perror("err_msg_prepend (realloc)\n");
+        exit(EXIT_FAILURE);
+    }
+    // Overwrite first null byte
+    memcpy(prefix + nbytes1, e->msg, nbytes2);
+    free(e->msg);
+    e->msg = prefix;
+
+    assert(strlen(e->msg) == nbytes1+nbytes2-1);
 }
 
 void err_msg_append(ErrorStatus *e, char *fmt, ...) {
     char *suffix;
-    char *old;
     va_list ap;
+    unsigned nbytes1, nbytes2;
 
     va_start(ap, fmt);
     suffix = alloc_msg(fmt, ap);
     va_end(ap);
 
     if (suffix == NULL) {
-        fprintf(stderr, "Failed to append to error message\n");
+        perror("err_msg_append (malloc)\n");
         exit(EXIT_FAILURE);
     }
 
-    old = e->msg; // to free
-    err_msg(e, "%s%s", e->msg, suffix); // reassigns e->msg
-    free(old);
+    // Append suffix to e->msg
+    nbytes1 = strlen(e->msg);
+    nbytes2 = strlen(suffix) + 1; // +1 for null char
+    e->msg = realloc(e->msg, nbytes1 + nbytes2);
+    if (e->msg == NULL) {
+        perror("err_msg_append (realloc)\n");
+        exit(EXIT_FAILURE);
+    }
+    // Overwrite first null byte
+    memcpy(e->msg + nbytes1, suffix, nbytes2);
+
+    assert(strlen(e->msg) == nbytes1+nbytes2-1);
+    free(suffix);
 }
 
 void err_msg_errno(ErrorStatus *e, char *fmt, ...) {
@@ -135,6 +156,7 @@ void err_free(ErrorStatus *e) {
  * itself.
  */
 void err_reset(ErrorStatus *e) {
+    //printf("Warning: err_msg overwriting unfreed error message\n");
     err_free(e);
 }
 
@@ -184,3 +206,20 @@ void loginfo(InfoLevel level, char *fmt, ...) {
     va_end(ap);
 }
 */
+
+#ifdef __TEST
+
+void __test_error() {
+    ErrorStatus e;
+    err_init(&e);
+
+    errno = 74; // EBADMSG
+    err_msg_errno(&e, "oh no!");
+    err_show(&e);
+    err_msg_prepend(&e, "blah blah blah");
+    err_show(&e);
+    err_msg(&e, "New blank one...");
+    err_show(&e);
+}
+
+#endif

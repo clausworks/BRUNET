@@ -8,8 +8,9 @@
 #include "dict.h"
 #include "cache.h"
 
-typedef enum { ROLE_CLIENT, ROLE_SERVER } ConnectionRole;
-typedef enum { OOB_ENABLE, OOB_DISABLE } OutOfBandStatus;
+//typedef enum { ROLE_CLIENT, ROLE_SERVER } ConnectionRole;
+//typedef enum { OOB_ENABLE, OOB_DISABLE } OutOfBandStatus;
+
 typedef enum {
     PSOCK_INVALID,
     PSOCK_WAITING,
@@ -17,12 +18,21 @@ typedef enum {
     PSOCK_CONNECTED,
     PSOCK_THIS_DEVICE,
 } PeerSockStatus;
+
 typedef enum {
     FDTYPE_LISTEN,
     FDTYPE_USER,
     FDTYPE_PEER,
     FDTYPE_TIMER
 } FDType;
+
+typedef enum {
+    PEND_NONE,
+    PEND_LC_NEW,
+} PendingCmd;
+
+#define PKT_DATA 0
+#define PKT_LC_NEW 1
 
 #define RDR_BUF_SIZE 4096
 
@@ -50,16 +60,40 @@ typedef enum {
 #define LC_ID_INSTBITS (LC_ID_BITS - LC_ID_PEERBITS)
 //#define MAX_USER_CONNS_LIFETIME (1 << 
 
+
 #define TFD_LEN_SEC 5
 
-/* Logical connection */
+/* Packet "within the system" carrying a payload
+ */
+// TODO: use bitfield to save room
+typedef struct {
+    uint8_t type; // one of 
+    uint64_t lc_id; // connection this packet belongs to
+    uint8_t dir; // direction, 0 = client-to-server, 1 = server-to-client
+    uint32_t off; // offset in bytes of payload in connection's byte stream
+    // TODO: make offset 64-bit. Any restrictions?
+    uint32_t len; // number of bytes in payload
+    // TODO: make this 16-bit? What is max bytes
+} PktHdr;
+
+
+/* Logical connection (LC)
+ * Stores the state on this device of each connection initiated by the user. If
+ * the user initiates the connection on this device, a new LC entry is created
+ * and added to the hash table (Dict) logconns. A logical connection may be
+ * initiated on another device, in which case an LC entry is created when an
+ * LC_NEW packet is received.
+ */
 typedef struct {
     unsigned id;
     struct in_addr clnt;
+    unsigned clnt_id;
     struct in_addr serv;
+    unsigned serv_id;
     in_port_t serv_port;
-    unsigned inst;
+    //unsigned inst;
     Cache cache;
+    PendingCmd pending_cmd[POLL_NUM_PSOCKS]; // same as type field of PktHdr
 } LogConn;
 
 
@@ -85,17 +119,5 @@ typedef struct {
     UserConnState userconns[POLL_NUM_USOCKS]; // active (tracked) connections w/ user programs
     Dict *logconns; // all logical connections in system (known by this device)
 } ConnectivityState;
-
-/* Packet "within the system" carrying a payload */
-// TODO: use bitfield to save room
-typedef struct {
-    uint8_t type; // packet type, 0 = data, 1 = command
-    uint64_t lc_id; // connection this packet belongs to
-    uint8_t dir; // direction, 0 = client-to-server, 1 = server-to-client
-    uint32_t off; // offset in bytes of payload in connection's byte stream
-    // TODO: make offset 64-bit. Any restrictions?
-    uint32_t len; // number of bytes in payload
-    // TODO: make this 16-bit? What is max bytes
-} ProxyPacketHeader;
 
 #endif
