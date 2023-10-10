@@ -987,7 +987,7 @@ static int writev_from_obuf(PktWriteBuf *buf, int sock, ErrorStatus *e) {
         n_seqs = 1;
         // Read head to write head
         buf->vecbuf[0].iov_len = buf->w - buf->r;
-        buf->vecbuf[0].iov_base = buf->buf + buf->w;
+        buf->vecbuf[0].iov_base = buf->buf + buf->r;
     }
     // No bytes to write
     else {
