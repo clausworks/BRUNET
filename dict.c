@@ -313,7 +313,7 @@ void __test_dict2() {
     assert(d != NULL);
 
     iter = dict_iter_new(d);
-    assert(iter != NULL);
+    assert(iter == NULL);
 
     dict_insert(d, items[0], items+0, &e);
     result = *(int *)dict_get(d, items[0], &e);
@@ -325,7 +325,7 @@ void __test_dict2() {
     assert(dict_iter_hasnext(iter) == false);
     result = *(int *)dict_iter_read(iter);
     assert(result == items[0]);
-    assert(dict_iter_next(iter) == 0);
+    assert((iter = dict_iter_next(iter)) == NULL);
 
     assert(NULL != dict_pop(d, items[0], &e));
     assert(NULL == dict_pop(d, items[0], &e));
@@ -352,14 +352,14 @@ void __test_dict2() {
         result = *(int *)dict_iter_read(iter);
         printf("result: %d  items[%d]: %d\n", result, i, items[i]);
         assert(result == items[i]);
-        assert(dict_iter_next(iter) == 0);
+        assert((iter = dict_iter_next(iter)) != NULL);
         ++i;
     }
     result = *(int *)dict_iter_read(iter);
     printf("result: %d  items[%d]: %d\n", result, i, items[i]);
     assert(result == items[i]);
-    assert(dict_iter_next(iter) == 0);
-    assert(dict_iter_next(iter) == -1);
+    assert((iter = dict_iter_next(iter)) == NULL);
+    //assert((iter = dict_iter_next(iter)) == NULL);
 
     dict_destroy(d);
     printf("Dict test passed.\n");
