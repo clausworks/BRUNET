@@ -1078,7 +1078,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         .len = sizeof(LogConn)
                     };
                     // debug
-                    memset(&hdr, 'A', sizeof(PktHdr));
+                    //memset(&hdr, 'A', sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, (char *)(lc), sizeof(LogConn));
                 }
