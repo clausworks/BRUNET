@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <linux/netfilter_ipv4.h>
 #include <stddef.h>
+#include <linux/tcp.h>  // needed instead of netinet/tcp.h for tcpi_bytes_acked
 
 #include "error.h"
 #include "configfile.h"
@@ -21,6 +22,7 @@
 #include "redirect.h"
 #include "cache.h"
 #include "dict.h"
+
 
 
 void sighandler_cleanup(int sig) {
@@ -217,6 +219,20 @@ static FDType get_fd_type(ConnectivityState *state, int i) {
     exit(EXIT_FAILURE);
 }
 
+/* Returns 0 on success, -1 on failure */
+int bytes_acked(int sock, long long unsigned int *nbytes, ErrorStatus *e) {
+    struct tcp_info info;
+    socklen_t info_size = sizeof(struct tcp_info);
+
+    if (getsockopt(sock, 6, TCP_INFO, &info, &info_size) != 0) {
+        err_msg_errno(e, "bytes_acked: getsockopt failed");
+        return -1;
+    }
+
+    *nbytes = info.tcpi_bytes_acked;
+    return 0;
+}
+
 
 /******************************************************************************
  * LOGICAL CONNECTION DICTIONARY FUNCTIONS
@@ -374,6 +390,8 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
     struct in_addr c; // current client addr
     struct in_addr s; // current server addr
     int p = 0; // index into state->peers
+
+    // Note: memset occurred in parent function
 
     // Glean peer IP addresses from managed client/server pairs
     // Store each IP address once in config->pairs
@@ -610,7 +628,7 @@ static int handle_new_userconn(ConnectivityState *state, struct pollfd fds[],
     /* TODO: SFN only
     for (int i = 0; i < state->n_peers; ++i) {
         if (i != clnt_id) {
-            lc->pending_cmd[i] = PKT_LC_NEW;
+            lc->pending_cmd[i] = PEND_LC_NEW;
             fds[i + POLL_PSOCKS_OFF].events |= POLLOUT;
         }
     }
@@ -884,19 +902,168 @@ static bool has_so_error(int sock, ErrorStatus *e) {
     return false;
 }
 
+static int obuf_get_empty(OutputBuf *buf) {
+    int empty;
+
+    empty = buf->a - buf->w;
+    if (empty < 0) {
+        empty += buf->len;
+    }
+
+    return empty;
+}
+
+static int writev_from_obuf(OutputBuf *buf, int sock, ErrorStatus *e) {
+    int n_seqs, n_written;
+    // Two byte sequences: w < r
+    if (buf->w < buf->r) {
+        n_seqs = 2;
+        // Read head to end of buf
+        buf->vecbuf[0].iov_base = buf->buf + buf->r;
+        buf->vecbuf[0].iov_len = buf->len - buf->r;
+        // Beginning to write head (end of seq)
+        buf->vecbuf[1].iov_base = buf;
+        buf->vecbuf[1].iov_len = buf->w;
+    }
+    // One byte sequence: w > r
+    else if (buf->w > buf->r) {
+        n_seqs = 1;
+        // Write head to ack head
+        buf->vecbuf[0].iov_len = buf->a - buf->w;
+        buf->vecbuf[0].iov_base = buf->buf + buf->w;
+    }
+    // No bytes to write
+    else {
+        n_seqs = 0;
+        printf("No bytes to write to peer\n");
+    }
+
+    // Perform write
+    n_written = writev(sock, buf->vecbuf, n_seqs);
+    printf("write to peer: %d bytes\n", n_written);
+    if (n_written == -1) {
+        if (errno == EAGAIN) {
+            n_written = 0;
+        }
+        else {
+            err_msg_errno(e, "obuf_perform_write: writev");
+            return -1;
+        }
+    }
+
+    // Update read head based on how many bytes were successfully written
+    buf->r = (buf->r + n_written) % buf->len;
+
+    return 0;
+}
+
+static void copy_to_obuf(OutputBuf *buf, char *new, int len) {
+    int empty = obuf_get_empty(buf);
+    int nbytes;
+
+    assert(empty != 0);
+    assert(len <= empty);
+
+    // Two empty sequences: a < w
+    if (buf->a < buf->w) {
+        // Write head to end of buf
+        nbytes = (len < buf->len - buf->w) ? len : buf->len - buf->w;
+        memcpy(buf->buf + buf->w, new, nbytes);
+        // If necessary, perform second write
+        // Beginning of buf to ack head
+        if (nbytes < len) {
+            memcpy(buf->buf, new + nbytes, len - nbytes);
+        }
+    }
+    // One empty sequence: a > w
+    else if (buf->a > buf->w) {
+        memcpy(buf->buf + buf->w, new, len);
+    }
+    // No bytes: a = w
+    else {
+        // Shouldn't get here
+        printf("Buffer full");
+    }
+
+    buf->w = (buf->w + len) % buf->len;
+}
+
+static int send_packet(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    Dict *lcs = state->logconns;
+    LogConn *lc;
+    unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
+    PeerState *peer = &state->peers[peer_id];
+
+    if (peer == NULL) {
+        peer->lc_iter = dict_iter_new(lcs);
+        if (peer->lc_iter == NULL) {
+            err_msg(e, "stage_packet: no logical connections");
+            return -1;
+        }
+    }
+    
+    // Continue loop, potentially from last time
+    while (dict_iter_hasnext(peer->lc_iter)) {
+        lc = (LogConn *)dict_iter_read(peer->lc_iter);
+        int pktlen;
+        // Non-SFN case: look for LC 
+        if (lc->serv_id == peer_id) {
+            // Handle pending commands
+            // Command: new logical connection
+            if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
+                pktlen = sizeof(PktHdr) + sizeof(LogConn);
+                // Copy to output buf only if there's enough space
+                if (obuf_get_empty(&peer->obuf) > pktlen) {
+                    PktHdr hdr = {
+                        .type = PKTTYPE_LC_NEW,
+                        .lc_id = lc->id,
+                        .dir = PKTDIR_FWD,
+                        .off = 0,
+                        .len = sizeof(LogConn)
+                    };
+                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+                    copy_to_obuf(&peer->obuf, (char *)(lc), sizeof(LogConn));
+                }
+                else {
+                    // TODO: opportunity for ordered queue. Perhaps bump up this
+                    // LC to the head of the queue so it gets considered sooner.
+
+                    // TODO: optimize loop for non-SFN case?
+                }
+            }
+        }
+
+        peer->lc_iter = dict_iter_next(peer->lc_iter);
+    }
+
+    // After assembling packets, write buffer
+    if (writev_from_obuf(&peer->obuf, fds[fd_i].fd, e) < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
 static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     int i;
 
     i = fd_i - POLL_PSOCKS_OFF;
+
     switch (state->peers[i].sock_status) {
     case PSOCK_CONNECTING: // was connecting
         fds[fd_i].events = POLLIN;
         state->peers[i].sock_status = PSOCK_CONNECTED;
         break;
     case PSOCK_CONNECTED: // already connected, data to write
-        assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
+        printf("handle_pollout_peer: PSOCK_CONNECTED\n");
+        if (send_packet(state, fds, fd_i, e) < 0) {
+            err_msg_prepend(e, "handle_pollout_peer: ");
+            return -1;
+        }
         break;
     case PSOCK_WAITING:
     case PSOCK_INVALID:
@@ -1118,5 +1285,4 @@ int main(int argc, char **argv) {
     return 0;
 #endif
 }
-
 

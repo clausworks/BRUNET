@@ -3,6 +3,7 @@
 
 #include <netinet/in.h>
 #include <stdbool.h>
+#include <sys/uio.h>
 
 #include "configfile.h"
 #include "dict.h"
@@ -31,8 +32,18 @@ typedef enum {
     PEND_LC_NEW,
 } PendingCmd;
 
-#define PKT_DATA 0
-#define PKT_LC_NEW 1
+typedef enum {
+    PKTDIR_FWD = 0,
+    PKTDIR_BKWD = 1
+} PktDirection;
+
+typedef enum {
+    PKTTYPE_DATA = 0,
+    PKTTYPE_LC_NEW = 1
+} PktType;
+
+#define PKT_MAX_LEN 1024
+#define PEER_OBUF_LEN 4096
 
 #define RDR_BUF_SIZE 4096
 
@@ -59,7 +70,6 @@ typedef enum {
 #define LC_ID_PEERBITS 4 // NOTE: number of bits to store CF_MAX_DEVICES-1
 #define LC_ID_INSTBITS (LC_ID_BITS - LC_ID_PEERBITS)
 //#define MAX_USER_CONNS_LIFETIME (1 << 
-
 
 #define TFD_LEN_SEC 5
 
@@ -96,12 +106,24 @@ typedef struct {
     PendingCmd pending_cmd[POLL_NUM_PSOCKS]; // same as type field of PktHdr
 } LogConn;
 
+typedef struct {
+    char buf[PEER_OBUF_LEN];
+    int len;
+    int r;
+    int w;
+    int a;
+    struct iovec vecbuf[2];
+} OutputBuf;
 
 /* Peer: a device on the network running this software */
 typedef struct {
     struct in_addr addr;
     int sock;
     PeerSockStatus sock_status; // true if sock represents a timer fd
+    unsigned long long total_sent;
+    unsigned long long total_acked;
+    dictiter_t lc_iter;
+    OutputBuf obuf;
 } PeerState;
 
 /* User connection: a TCP connection to a local user program */

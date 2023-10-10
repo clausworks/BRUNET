@@ -37,20 +37,6 @@ size_t rdr_do_write(const int fd, char *buf, const size_t len) {
 	return offset;
 }
 
-/* Returns 0 on success, -1 on failure */
-int bytes_acked(int sock, long long unsigned int *nbytes) {
-    struct tcp_info info;
-    socklen_t info_size = sizeof(struct tcp_info);
-
-    if (getsockopt(sock, 6, TCP_INFO, &info, &info_size) != 0) {
-        perror("getsockopt failed");
-        return -1;
-    }
-
-    *nbytes = info.tcpi_bytes_acked;
-    return 0;
-}
-
 // from tcprdr
 /* A symmetric copy between two file descriptors. Waits for data to read from
  * one and writes it to the other. Returns when a connection closes or an error

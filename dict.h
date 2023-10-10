@@ -23,11 +23,20 @@ typedef struct {
     DictNode *iter_;
 } Dict;
 
+typedef DictNode * dictiter_t;
+
 int dict_insert(Dict *, unsigned, void *, ErrorStatus *);
+int dict_set_add(Dict *, unsigned, ErrorStatus *);
 void *dict_get(Dict *, unsigned, ErrorStatus *);
 void *dict_pop(Dict *, unsigned, ErrorStatus *);
+
+dictiter_t dict_iter_new(Dict *);
+bool dict_iter_hasnext(dictiter_t);
+dictiter_t dict_iter_next(dictiter_t);
+void *dict_iter_read(dictiter_t);
+
 Dict *dict_create(ErrorStatus *);
-void dict_free(Dict *);
+void dict_destroy(Dict *);
 
 #define DICT_NUM_BUCKETS 64
 
