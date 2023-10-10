@@ -43,7 +43,7 @@ typedef enum {
 } PktType;
 
 #define PKT_MAX_LEN 1024
-#define PEER_OBUF_LEN 4096
+#define PEER_BUF_LEN 4096
 
 #define RDR_BUF_SIZE 4096
 
@@ -107,13 +107,19 @@ typedef struct {
 } LogConn;
 
 typedef struct {
-    char buf[PEER_OBUF_LEN];
+    char buf[PEER_BUF_LEN];
     int len;
     int r;
     int w;
     int a;
     struct iovec vecbuf[2];
-} OutputBuf;
+} PktWriteBuf;
+
+typedef struct {
+    char buf[PEER_BUF_LEN];
+    int len;
+    int w;
+} PktReadBuf;
 
 /* Peer: a device on the network running this software */
 typedef struct {
@@ -123,7 +129,8 @@ typedef struct {
     unsigned long long total_sent;
     unsigned long long total_acked;
     dictiter_t lc_iter;
-    OutputBuf obuf;
+    PktWriteBuf obuf;
+    PktReadBuf ibuf;
 } PeerState;
 
 /* User connection: a TCP connection to a local user program */

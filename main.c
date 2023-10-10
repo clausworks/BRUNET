@@ -811,35 +811,62 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     // Receive packets from read, one at a time
-    char buf[PKT_MAX_LEN];
+    int peer_id = fd_i - POLL_PSOCKS_OFF;
+    PeerState *peer = &state->peers[peer_id];
+    PktReadBuf *buf = &peer->ibuf;
     int read_len;
+    PktHdr *hdr = NULL;
+    int nbytes;
     
-    memset(buf, 0, sizeof(buf));
-    read_len = read(fds[fd_i].fd, buf, sizeof(PktHdr));
-    // EOF
-    if (read_len == 0) {
-        printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
-        return handle_disconnect(state, fds, fd_i, e);
-    }
-    // Error
-    else if (read_len < 0) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            printf("Read return < 0\n");
-            err_msg_errno(e, "read returned < 0");
-            handle_disconnect(state, fds, fd_i, e);
-            return -1;
+    while (1) {
+        // Read packet header (or remaining bytes thereof)
+        if (buf->w < sizeof(PktHdr)) {
+            nbytes = sizeof(PktHdr) - buf->w;
         }
+        // Read payload (or remaining bytes thereof)
         else {
-            printf("Faulty trigger for pollin\n");
-            return 0;
+            hdr = (PktHdr *)buf->buf;
+            nbytes = hdr->len - buf->w;
+
+            assert(nbytes < buf->len - buf->w);
         }
-    }
-    else if (read_len < sizeof(PktHdr)) {
-        return 0;
+
+        read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
+        buf->w += nbytes;
+
+        printf("%d bytes read (fd %d)\n", read_len, fds[fd_i].fd);
+
+        // EOF
+        if (read_len == 0) {
+            printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
+            return handle_disconnect(state, fds, fd_i, e);
+        }
+        // Error
+        else if (read_len < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                printf("Read return < 0\n");
+                err_msg_errno(e, "read returned < 0");
+                handle_disconnect(state, fds, fd_i, e);
+                return -1;
+            }
+            else {
+                printf("Faulty trigger for pollin\n");
+                return 0;
+            }
+        }
+        // Incomplete
+        else if (read_len < nbytes) {
+            printf("Incomplete packet\n");
+            return 0; // finish read on next run
+        }
+
+        if (hdr != NULL) {
+            break;
+        }
     }
 
-    // Normal/:
-    printf("%d bytes read: [%s]\n", read_len, buf);
+    // Have full packet
+    printf("Processing packet...\n");
 
     return 0;
 }
@@ -931,7 +958,7 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-static int obuf_get_empty(PeerBuf *buf) {
+static int obuf_get_empty(PktWriteBuf *buf) {
     // Subtract 1 -- byte at a-1 is always empty
     // We need a spare byte to differentiate between empty and full
     if (buf->a <= buf->w) {
@@ -942,7 +969,7 @@ static int obuf_get_empty(PeerBuf *buf) {
     }
 }
 
-static int writev_from_obuf(PeerBuf *buf, int sock, ErrorStatus *e) {
+static int writev_from_obuf(PktWriteBuf *buf, int sock, ErrorStatus *e) {
     int n_seqs, n_written;
     // We're always writing from the read head to the write head
     // Two byte sequences: w < r
@@ -987,7 +1014,7 @@ static int writev_from_obuf(PeerBuf *buf, int sock, ErrorStatus *e) {
     return 0;
 }
 
-static void copy_to_obuf(PeerBuf *buf, char *new, int len) {
+static void copy_to_obuf(PktWriteBuf *buf, char *new, int len) {
     int empty = obuf_get_empty(buf);
     int nbytes;
 
