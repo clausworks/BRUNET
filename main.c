@@ -364,6 +364,7 @@ int _peer_compare_addr(const void *a, const void *b) {
 
 static void add_peer(ConnectivityState *state, int *p,
     struct in_addr addr, struct in_addr this_dev) {
+
     bool found = false;
     for (int j = 0; j < *p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
         if (addr.s_addr == state->peers[j].addr.s_addr) {
@@ -372,6 +373,7 @@ static void add_peer(ConnectivityState *state, int *p,
         }
     }
     if (!found) {
+        // Initialize PeerState object
         state->peers[*p].addr = addr;
         state->peers[*p].sock = -1; 
         if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
@@ -380,6 +382,9 @@ static void add_peer(ConnectivityState *state, int *p,
         else {
             state->peers[*p].sock_status = PSOCK_INVALID;
         }
+        state->peers[*p].obuf.len = PEER_BUF_LEN;
+        state->peers[*p].ibuf.len = PEER_BUF_LEN;
+
 
         printf("Added peer %s\n", inet_ntoa(addr));
         *p += 1;
@@ -443,6 +448,25 @@ static int init_connectivity_state(ConnectivityState *state,
 
     return 0;
 }
+
+static bool has_so_error(int sock, ErrorStatus *e) {
+    int so_error;
+    socklen_t so_len = sizeof(int);
+
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR,
+        &so_error, &so_len) < 0) {
+        err_msg_errno(e, "getsockopt: POLLOUT");
+        return true;
+    }
+    if (so_error) {
+        // TODO: interpret so_error (same as errno?)
+        err_msg(e, "SO_ERROR on user socket on POLLOUT\n");
+        return true;
+    }
+
+    return false;
+}
+
 
 /******************************************************************************
  * POLL HANDLER FUNCTIONS
@@ -783,27 +807,15 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-
-static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
+static int receive_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    int so_error;
-    socklen_t so_len = sizeof(int);
-    char buf[4096];
-    ssize_t read_len;
-
-    if (getsockopt(fds[fd_i].fd, SOL_SOCKET, SO_ERROR,
-        &so_error, &so_len) < 0) {
-        err_msg_errno(e, "getsockopt: POLLIN");
-        return -1;
-    }
-    if (so_error) {
-        printf("Error on user socket on POLLIN\n");
-        return handle_disconnect(state, fds, fd_i, e);
-    }
-
+    // Receive packets from read, one at a time
+    char buf[PKT_MAX_LEN];
+    int read_len;
+    
     memset(buf, 0, sizeof(buf));
-    read_len = read(fds[fd_i].fd, buf, sizeof(buf));
+    read_len = read(fds[fd_i].fd, buf, sizeof(PktHdr));
     // EOF
     if (read_len == 0) {
         printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
@@ -819,14 +831,43 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
         }
         else {
             printf("Faulty trigger for pollin\n");
+            return 0;
         }
     }
-    // Normal
-    else {
-        printf("%d bytes read: [%s]\n", read_len, buf);
+    else if (read_len < sizeof(PktHdr)) {
+        return 0;
     }
 
+    // Normal/:
+    printf("%d bytes read: [%s]\n", read_len, buf);
+
     return 0;
+}
+
+static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int i;
+    i = fd_i - POLL_PSOCKS_OFF;
+
+    switch (state->peers[i].sock_status) {
+    case PSOCK_CONNECTED: // already connected, data to write
+        receive_packet(state, fds, fd_i, e);
+        break;
+    case PSOCK_CONNECTING: // was connecting
+    case PSOCK_WAITING:
+    case PSOCK_INVALID:
+    case PSOCK_THIS_DEVICE:
+        assert(0); // should never get here
+        break;
+    }
+
+    //return handle_disconnect(state, fds, fd_i, e);
+    // a) Nonblocking connection attempt succeeded
+    // b) TODO: data to write
+    
+    return 0;
+
 }
 
 static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
@@ -872,9 +913,15 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
         return handle_pollin_listen(state, fds, fd_i, e);
     case FDTYPE_USER:
         printf("FDTYPE_USER POLLIN\n");
+        if (has_so_error(fds[fd_i].fd, e)) {
+            return handle_disconnect(state, fds, fd_i, e);
+        }
         return handle_pollin_user(state, fds, fd_i, e);
     case FDTYPE_PEER:
         printf("FDTYPE_PEER POLLIN\n");
+        if (has_so_error(fds[fd_i].fd, e)) {
+            return handle_disconnect(state, fds, fd_i, e);
+        }
         return handle_pollin_peer(state, fds, fd_i, e);
     case FDTYPE_TIMER:
         printf("FDTYPE_TIMER POLLIN\n");
@@ -884,37 +931,20 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-static bool has_so_error(int sock, ErrorStatus *e) {
-    int so_error;
-    socklen_t so_len = sizeof(int);
-
-    if (getsockopt(sock, SOL_SOCKET, SO_ERROR,
-        &so_error, &so_len) < 0) {
-        err_msg_errno(e, "getsockopt: POLLOUT");
-        return true;
+static int obuf_get_empty(PeerBuf *buf) {
+    // Subtract 1 -- byte at a-1 is always empty
+    // We need a spare byte to differentiate between empty and full
+    if (buf->a <= buf->w) {
+        return buf->a - buf->w + buf->len - 1;
     }
-    if (so_error) {
-        // TODO: interpret so_error (same as errno?)
-        err_msg(e, "SO_ERROR on user socket on POLLOUT\n");
-        return true;
+    else {
+        return buf->a - buf->w - 1;
     }
-
-    return false;
 }
 
-static int obuf_get_empty(OutputBuf *buf) {
-    int empty;
-
-    empty = buf->a - buf->w;
-    if (empty < 0) {
-        empty += buf->len;
-    }
-
-    return empty;
-}
-
-static int writev_from_obuf(OutputBuf *buf, int sock, ErrorStatus *e) {
+static int writev_from_obuf(PeerBuf *buf, int sock, ErrorStatus *e) {
     int n_seqs, n_written;
+    // We're always writing from the read head to the write head
     // Two byte sequences: w < r
     if (buf->w < buf->r) {
         n_seqs = 2;
@@ -928,8 +958,8 @@ static int writev_from_obuf(OutputBuf *buf, int sock, ErrorStatus *e) {
     // One byte sequence: w > r
     else if (buf->w > buf->r) {
         n_seqs = 1;
-        // Write head to ack head
-        buf->vecbuf[0].iov_len = buf->a - buf->w;
+        // Read head to write head
+        buf->vecbuf[0].iov_len = buf->w - buf->r;
         buf->vecbuf[0].iov_base = buf->buf + buf->w;
     }
     // No bytes to write
@@ -957,15 +987,16 @@ static int writev_from_obuf(OutputBuf *buf, int sock, ErrorStatus *e) {
     return 0;
 }
 
-static void copy_to_obuf(OutputBuf *buf, char *new, int len) {
+static void copy_to_obuf(PeerBuf *buf, char *new, int len) {
     int empty = obuf_get_empty(buf);
     int nbytes;
 
     assert(empty != 0);
     assert(len <= empty);
 
-    // Two empty sequences: a < w
-    if (buf->a < buf->w) {
+    // Two empty sequences: a <= w
+    // In a=w case, buffer is empty.
+    if (buf->a <= buf->w) {
         // Write head to end of buf
         nbytes = (len < buf->len - buf->w) ? len : buf->len - buf->w;
         memcpy(buf->buf + buf->w, new, nbytes);
@@ -976,16 +1007,12 @@ static void copy_to_obuf(OutputBuf *buf, char *new, int len) {
         }
     }
     // One empty sequence: a > w
-    else if (buf->a > buf->w) {
+    else { // if (buf->a > buf->w)
         memcpy(buf->buf + buf->w, new, len);
-    }
-    // No bytes: a = w
-    else {
-        // Shouldn't get here
-        printf("Buffer full");
     }
 
     buf->w = (buf->w + len) % buf->len;
+    assert(buf->w != buf->a);
 }
 
 static int send_packet(ConnectivityState *state, struct pollfd fds[],
@@ -996,7 +1023,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     PeerState *peer = &state->peers[peer_id];
 
-    if (peer == NULL) {
+    if (peer->lc_iter == NULL) {
         peer->lc_iter = dict_iter_new(lcs);
         if (peer->lc_iter == NULL) {
             err_msg(e, "stage_packet: no logical connections");
@@ -1005,7 +1032,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     }
     
     // Continue loop, potentially from last time
-    while (dict_iter_hasnext(peer->lc_iter)) {
+    while (1) {
         lc = (LogConn *)dict_iter_read(peer->lc_iter);
         int pktlen;
         // Non-SFN case: look for LC 
@@ -1035,7 +1062,12 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             }
         }
 
-        peer->lc_iter = dict_iter_next(peer->lc_iter);
+        if (!dict_iter_hasnext(peer->lc_iter)) {
+            break;
+        }
+        else {
+            peer->lc_iter = dict_iter_next(peer->lc_iter);
+        }
     }
 
     // After assembling packets, write buffer
