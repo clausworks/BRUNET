@@ -1214,7 +1214,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 continue;
             }
 
-            printf("\nProcessing socket:\n");
+            printf("\n------------------\n");
             print_sock_info(fds[i].fd);
 
             // Event: hangup
