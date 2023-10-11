@@ -22,6 +22,7 @@
 #include "redirect.h"
 #include "cache.h"
 #include "dict.h"
+#include "util.h"
 
 
 
@@ -832,6 +833,9 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         // Read packet header (or remaining bytes thereof)
         if (buf->w < sizeof(PktHdr)) {
             nbytes = sizeof(PktHdr) - buf->w;
+
+            // debug
+            nbytes = sizeof(PktHdr);
         }
         // Read payload (or remaining bytes thereof)
         else {
@@ -839,12 +843,16 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
             nbytes = hdr->len - buf->w;
 
             assert(nbytes < buf->len - buf->w);
+
+            // debug
+            nbytes = sizeof(LogConn);
         }
 
         read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
         buf->w += nbytes;
 
         printf("%d bytes read (fd %d)\n", read_len, fds[fd_i].fd);
+        hex_dump(NULL, buf->buf + buf->w, read_len, 16);
 
         // EOF
         if (read_len == 0) {
@@ -1012,6 +1020,7 @@ static int writev_from_obuf(PktWriteBuf *buf, int sock, ErrorStatus *e) {
     // Perform write
     n_written = writev(sock, buf->vecbuf, n_seqs);
     printf("write to peer: %d bytes\n", n_written);
+    //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
     if (n_written == -1) {
         if (errno == EAGAIN) {
             n_written = 0;
@@ -1092,9 +1101,13 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         .len = sizeof(LogConn)
                     };
                     // debug
-                    //memset(&hdr, 'A', sizeof(PktHdr));
+                    memset(&hdr, 'H', sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+
+                    memset(&hdr, 'P', sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, (char *)(lc), sizeof(LogConn));
+
+                    lc->pending_cmd[peer_id] = PEND_NONE;
                 }
                 else {
                     // TODO: opportunity for ordered queue. Perhaps bump up this
