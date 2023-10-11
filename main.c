@@ -842,17 +842,17 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
             hdr = (PktHdr *)buf->buf;
             nbytes = hdr->len - buf->w;
 
-            assert(nbytes < buf->len - buf->w);
+            //assert(nbytes < buf->len - buf->w);
 
             // debug
             nbytes = sizeof(LogConn);
         }
 
         read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
-        buf->w += nbytes;
-
         printf("%d bytes read (fd %d)\n", read_len, fds[fd_i].fd);
         hex_dump(NULL, buf->buf + buf->w, read_len, 16);
+        buf->w += nbytes;
+
 
         // EOF
         if (read_len == 0) {
@@ -1143,8 +1143,10 @@ static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
 
     switch (state->peers[i].sock_status) {
     case PSOCK_CONNECTING: // was connecting
+        printf("handle_pollout_peer: PSOCK_CONNECTING\n");
         fds[fd_i].events = POLLIN | POLLRDHUP;
         state->peers[i].sock_status = PSOCK_CONNECTED;
+        printf("Connected (fd %d)\n", fds[fd_i].fd);
         break;
     case PSOCK_CONNECTED: // already connected, data to write
         printf("handle_pollout_peer: PSOCK_CONNECTED\n");
