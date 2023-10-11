@@ -835,7 +835,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
             nbytes = sizeof(PktHdr) - buf->w;
 
             // debug
-            nbytes = sizeof(PktHdr);
+            //nbytes = sizeof(PktHdr);
         }
         // Read payload (or remaining bytes thereof)
         else {
