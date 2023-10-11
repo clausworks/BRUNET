@@ -1117,7 +1117,7 @@ static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
 
     switch (state->peers[i].sock_status) {
     case PSOCK_CONNECTING: // was connecting
-        fds[fd_i].events = POLLIN;
+        fds[fd_i].events = POLLIN | POLLRDHUP; // TODO: use |= instead of = ?
         state->peers[i].sock_status = PSOCK_CONNECTED;
         break;
     case PSOCK_CONNECTED: // already connected, data to write
@@ -1225,6 +1225,138 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 handle_disconnect(state, fds, i, main_err);
                 continue;
             }
+            // Event: hangup (peer write end)
+            if (fds[i].revents & POLLRDHUP) {
+                --fd_remaining;
+                err_msg(e, "POLLRDHUP");
+                handle_disconnect(state, fds, i, main_err);
+                continue;
+            }
+            // Event: hangup (peer write end)
+            //
+            // Event: fd not open
+            else if (fds[i].revents & POLLNVAL) {
+                --fd_remaining;
+                err_msg(e, "POLLNVAL");
+                handle_disconnect(state, fds, i, main_err);
+                continue;
+            }
+            // Event: other error
+            else if (fds[i].revents & POLLERR) {
+                --fd_remaining;
+                err_msg(e, "POLLERR");
+                handle_disconnect(state, fds, i, main_err);
+                continue;
+            }
+            // Event: readable
+            if (fds[i].revents & POLLIN) {
+                --fd_remaining;
+                did_rw = true;
+                handle_pollin(state, fds, i, e);
+                //if (handle_pollin(state, fds, i, e) < 0) {
+                    //err_show(e);
+                //}
+            }
+            // Event: writable
+            if (fds[i].revents & POLLOUT) {
+                --fd_remaining;
+                did_rw = true;
+                handle_pollout(state, fds, i, e);
+            }
+
+            if (!did_rw) {
+                err_msg(e, "Unhandled event: revents=%x\n", fds[i].revents);
+            }
+        } // end for
+    } // end else
+
+    return 0;
+}
+
+
+#ifdef __TEST
+void test() {
+    printf("Running global test function...\n\n\n");
+    //__test_error();
+    __test_dict();
+    //__test_caching();
+}
+#endif
+
+
+int main(int argc, char **argv) {
+    ErrorStatus e;
+    ConfigFileParams config;
+    ConnectivityState state;
+    struct pollfd poll_fds[POLL_NUM_FDS];
+    ErrorStatus fd_errors[POLL_NUM_FDS];
+
+#ifdef __TEST
+    test();
+    return 0;
+#else
+
+    init_sighandlers();
+    cache_global_init();
+
+    err_init(&e);
+
+    if (0 != read_config_file(argv[1], &config)) {
+        printf("\nread_config_file: fail\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // TODO: TEST! does this work with multiple clients/servers?
+    if (rs_apply(&config) != 0) {
+        fprintf(stderr, "Failed to apply nft ruleset\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (init_connectivity_state(&state, &config, &e) < 0) {
+        err_show(&e);
+        exit(EXIT_FAILURE);
+    }
+    init_poll_fds(poll_fds, &state);
+
+    for (int i = 0; i < POLL_NUM_FDS; ++i) {
+        err_init(fd_errors + i);
+    }
+
+    connect_to_peers(&state, poll_fds, &e); // TODO: handle errors
+
+    while (1) {
+        // TODO: logical connections
+        // TODO: do we need this any more? Functionality duplicated
+        update_poll_fds(poll_fds, &state); // TODO: update based off `changed`
+
+        if (poll_once(&state, poll_fds, fd_errors, &e) != 0) {
+            err_show(&e);
+            exit(EXIT_FAILURE);
+        }
+
+        // Print any errors (TODO: make this more efficient)
+        for (int i = 0; i < POLL_NUM_FDS; ++i) {
+            err_show_if_present(fd_errors + i);
+            err_reset(fd_errors + i);
+        }
+    }
+
+    for (int i = 0; i < POLL_NUM_FDS; ++i) {
+        err_free(fd_errors + i);
+    }
+
+    err_free(&e);
+    printf("Done :)\n");
+
+    if (rs_cleanup() != 0) {
+        fprintf(stderr, "Failed to cleanup nft ruleset\n");
+        exit(EXIT_FAILURE);
+    }
+
+    return 0;
+#endif
+}
+
             // Event: fd not open
             else if (fds[i].revents & POLLNVAL) {
                 --fd_remaining;
