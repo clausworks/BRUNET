@@ -839,6 +839,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         // EOF
         if (read_len == 0) {
             printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
+            return 0; // debug
             return handle_disconnect(state, fds, fd_i, e);
         }
         // Error
@@ -907,7 +908,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     read_len = read(fds[fd_i].fd, buf, sizeof(buf));
     // EOF
     if (read_len == 0) {
-        printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
+        printf("Hit EOF (fd %d)\n", fds[fd_i].fd);
         return handle_disconnect(state, fds, fd_i, e);
     }
     // Error
