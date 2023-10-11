@@ -840,12 +840,12 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         // Read payload (or remaining bytes thereof)
         else {
             hdr = (PktHdr *)buf->buf;
-            nbytes = hdr->len - buf->w;
+            nbytes = hdr->len - buf->w + sizeof(PktHdr);
 
             //assert(nbytes < buf->len - buf->w);
 
             // debug
-            nbytes = sizeof(LogConn);
+            //nbytes = sizeof(LogConn);
         }
 
         read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
@@ -1000,9 +1000,11 @@ static int writev_from_obuf(PktWriteBuf *buf, int sock, ErrorStatus *e) {
         // Read head to end of buf
         buf->vecbuf[0].iov_base = buf->buf + buf->r;
         buf->vecbuf[0].iov_len = buf->len - buf->r;
+        //hex_dump("vecbuf 0", buf->vecbuf[0].iov_base, buf->vecbuf[0].iov_len, 16);
         // Beginning to write head (end of seq)
         buf->vecbuf[1].iov_base = buf;
         buf->vecbuf[1].iov_len = buf->w;
+        //hex_dump("vecbuf 1", buf->vecbuf[1].iov_base, buf->vecbuf[1].iov_len, 16);
     }
     // One byte sequence: w > r
     else if (buf->w > buf->r) {
@@ -1010,6 +1012,7 @@ static int writev_from_obuf(PktWriteBuf *buf, int sock, ErrorStatus *e) {
         // Read head to write head
         buf->vecbuf[0].iov_len = buf->w - buf->r;
         buf->vecbuf[0].iov_base = buf->buf + buf->r;
+        //hex_dump("vecbuf -", buf->vecbuf[0].iov_base, buf->vecbuf[0].iov_len, 16);
     }
     // No bytes to write
     else {
@@ -1063,6 +1066,8 @@ static void copy_to_obuf(PktWriteBuf *buf, char *new, int len) {
 
     buf->w = (buf->w + len) % buf->len;
     assert(buf->w != buf->a);
+
+    hex_dump("copy_to_obuf", new, len, 16);
 }
 
 static int send_packet(ConnectivityState *state, struct pollfd fds[],
@@ -1093,6 +1098,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 pktlen = sizeof(PktHdr) + sizeof(LogConn);
                 // Copy to output buf only if there's enough space
                 if (obuf_get_empty(&peer->obuf) > pktlen) {
+                    //char fakebuf[1024];
                     PktHdr hdr = {
                         .type = PKTTYPE_LC_NEW,
                         .lc_id = lc->id,
@@ -1101,10 +1107,12 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         .len = sizeof(LogConn)
                     };
                     // debug
-                    memset(&hdr, 'H', sizeof(PktHdr));
+                    //memset(fakebuf, 'H', sizeof(PktHdr));
+                    //copy_to_obuf(&peer->obuf, fakebuf, sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
 
-                    memset(&hdr, 'P', sizeof(PktHdr));
+                    //memset(fakebuf, 'P', sizeof(LogConn));
+                    //copy_to_obuf(&peer->obuf, fakebuf, sizeof(LogConn));
                     copy_to_obuf(&peer->obuf, (char *)(lc), sizeof(LogConn));
 
                     lc->pending_cmd[peer_id] = PEND_NONE;
