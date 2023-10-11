@@ -362,6 +362,16 @@ int _peer_compare_addr(const void *a, const void *b) {
     return ((int)pa->addr.s_addr - (int)pb->addr.s_addr);
 }
 
+static void reset_pktreadbuf(PktReadBuf *rbuf) {
+    memset(rbuf, 0, sizeof(PktReadBuf));
+    rbuf->len = PEER_BUF_LEN;
+}
+
+static void reset_pktwritebuf(PktWriteBuf *wbuf) {
+    memset(wbuf, 0, sizeof(PktWriteBuf));
+    wbuf->len = PEER_BUF_LEN;
+}
+
 static void add_peer(ConnectivityState *state, int *p,
     struct in_addr addr, struct in_addr this_dev) {
 
@@ -382,8 +392,8 @@ static void add_peer(ConnectivityState *state, int *p,
         else {
             state->peers[*p].sock_status = PSOCK_INVALID;
         }
-        state->peers[*p].obuf.len = PEER_BUF_LEN;
-        state->peers[*p].ibuf.len = PEER_BUF_LEN;
+        reset_pktwritebuf(&state->peers[*p].obuf);
+        reset_pktreadbuf(&state->peers[*p].ibuf);
 
 
         printf("Added peer %s\n", inet_ntoa(addr));
@@ -868,6 +878,9 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
 
     // Have full packet
     printf("Processing packet...\n");
+
+    // Cleanup
+    reset_pktreadbuf(buf);
 
     return 0;
 }
