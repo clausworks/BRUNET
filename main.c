@@ -857,7 +857,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         // EOF
         if (read_len == 0) {
             printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
-            return 0; // debug
+            //return 0; // debug
             return handle_disconnect(state, fds, fd_i, e);
         }
         // Error
