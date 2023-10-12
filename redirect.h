@@ -96,9 +96,9 @@ typedef struct {
  */
 typedef struct {
     unsigned id;
-    struct in_addr clnt;
+    //struct in_addr clnt;
     unsigned clnt_id;
-    struct in_addr serv;
+    //struct in_addr serv;
     unsigned serv_id;
     in_port_t serv_port;
     //unsigned inst;

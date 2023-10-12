@@ -626,8 +626,8 @@ static int handle_new_userconn(ConnectivityState *state, struct pollfd fds[],
     memset(lc, 0, sizeof(LogConn));
 
     /* BEGIN LC init */
-    lc->clnt = clntaddr.sin_addr;
-    lc->serv = servaddr.sin_addr;
+    //lc->clnt = clntaddr.sin_addr;
+    //lc->serv = servaddr.sin_addr;
     lc->serv_port = servaddr.sin_port;
 
     // Get index ("peer ID") of connection originator
@@ -671,6 +671,7 @@ static int handle_new_userconn(ConnectivityState *state, struct pollfd fds[],
 
     // Init cache
     if (cache_init(&lc->cache, lc->id, state->n_peers, e) < 0) {
+        err_msg_prepend(e, "handle_new_userconn: ");
         return -1;
     }
     /* END LC init */
@@ -818,6 +819,68 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
+static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int peer_id = fd_i - POLL_PSOCKS_OFF;
+    char *pktbuf = state->peers[peer_id].ibuf.buf;
+
+    PktHdr *hdr = (PktHdr *)(pktbuf);
+    LogConn *lc_buf = (LogConn *)(pktbuf + sizeof(PktHdr));
+
+    LogConn *lc = malloc(sizeof(LogConn));
+    if (lc == NULL) {
+        err_msg_errno(e, "add_lc_from_peer: malloc");
+        return -1;
+    }
+
+    memset(lc, 0, sizeof(LogConn));
+
+    lc->id = lc_buf->id;
+    lc->clnt_id = lc_buf->clnt_id;
+    lc->serv_id = lc_buf->serv_id;
+    lc->serv_port = lc_buf->serv_port;
+    // Don't copy cache or command fields
+    
+    if (cache_init(&lc->cache, lc->id, state->n_peers, e) < 0) {
+        err_msg_prepend(e, "add_lc_from_peer: ");
+        return -1;
+    }
+
+    // Add LC to dictionary
+    if (dict_insert(state->logconns, lc->id, lc, e) < 0) {
+        err_msg_prepend(e, "add_lc_from_peer: ");
+        return -1;
+    }
+
+    // TODO: attempt connection to server
+    // Handle later in poll
+    // - Server connects
+    // - Server refuses connection
+    //
+    // May need new list of local serv conns
+    // Maybe rename "user" conns as local clnt conns
+}
+
+static int process_packet(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int peer_id = fd_i - POLL_PSOCKS_OFF;
+    PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
+
+    switch (hdr->type) {
+    case PKTTYPE_DATA:
+        printf("PKTTYPE_DATA\n");
+        break;
+    case PKTTYPE_LC_NEW:
+        printf("PKTTYPE_LC_NEW\n");
+        return add_lc_from_peer(state, fds, fd_i, e);
+        break;
+    }
+
+    return 0;
+}
+
 static int receive_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -879,7 +942,9 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
             return 0; // finish read on next run
         }
 
+        // Complete
         if (hdr != NULL) {
+            // Finished reading entire packet
             break;
         }
     }
@@ -1378,6 +1443,8 @@ int main(int argc, char **argv) {
     for (int i = 0; i < POLL_NUM_FDS; ++i) {
         err_free(fd_errors + i);
     }
+    
+    // TODO: clean up any LCs
 
     err_free(&e);
     printf("Done :)\n");
