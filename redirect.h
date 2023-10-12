@@ -22,7 +22,7 @@ typedef enum {
 
 typedef enum {
     FDTYPE_LISTEN,
-    FDTYPE_USER,
+    FDTYPE_USERCLNT,
     FDTYPE_PEER,
     FDTYPE_TIMER
 } FDType;
@@ -51,25 +51,25 @@ typedef enum {
 #define POLL_LSOCK_P_IDX 1
 
 #define POLL_NUM_LSOCKS 2
-#define POLL_NUM_USOCKS CF_MAX_USER_CONNS // user program connections
+#define POLL_NUM_UCSOCKS CF_MAX_USERCLNT_CONNS // user program connections
+#define POLL_NUM_USSOCKS CF_MAX_USERSERV_CONNS // user program connections
 #define POLL_NUM_PSOCKS CF_MAX_DEVICES // peer sockets
-//#define POLL_NUM_TFDS POLL_NUM_PSOCKS // timer sockets
 #define POLL_NUM_FDS (\
     POLL_NUM_LSOCKS \
-    + POLL_NUM_USOCKS \
+    + POLL_NUM_UCSOCKS \
+    + POLL_NUM_USSOCKS \
     + POLL_NUM_PSOCKS \
-    /*+ POLL_NUM_TFDS*/ \
 )
 
 #define POLL_LSOCKS_OFF 0
-#define POLL_USOCKS_OFF (POLL_LSOCKS_OFF + POLL_NUM_LSOCKS)
-#define POLL_PSOCKS_OFF (POLL_USOCKS_OFF + POLL_NUM_USOCKS)
-//#define POLL_TFDS_OFF (POLL_PSOCKS_OFF + POLL_NUM_PSOCKS)
+#define POLL_UCSOCKS_OFF (POLL_LSOCKS_OFF + POLL_NUM_LSOCKS)
+#define POLL_USSOCKS_OFF (POLL_UCSOCKS_OFF + POLL_NUM_UCSOCKS)
+#define POLL_PSOCKS_OFF (POLL_USSOCKS_OFF + POLL_NUM_USSOCKS)
 
 #define LC_ID_BITS 32
 #define LC_ID_PEERBITS 4 // NOTE: number of bits to store CF_MAX_DEVICES-1
 #define LC_ID_INSTBITS (LC_ID_BITS - LC_ID_PEERBITS)
-//#define MAX_USER_CONNS_LIFETIME (1 << 
+//#define MAX_USERCLNT_CONNS_LIFETIME (1 << 
 
 #define TFD_LEN_SEC 5
 
@@ -80,9 +80,9 @@ typedef struct {
     uint8_t type; // one of 
     uint64_t lc_id; // connection this packet belongs to
     uint8_t dir; // direction, 0 = client-to-server, 1 = server-to-client
-    uint32_t off; // offset in bytes of payload in connection's byte stream
+    uint64_t off; // offset in bytes of payload in connection's byte stream
     // TODO: make offset 64-bit. Any restrictions?
-    uint32_t len; // number of bytes in payload
+    uint16_t len; // number of bytes in payload
     // TODO: make this 16-bit? What is max bytes
 } PktHdr;
 
@@ -96,14 +96,14 @@ typedef struct {
  */
 typedef struct {
     unsigned id;
-    //struct in_addr clnt;
     unsigned clnt_id;
-    //struct in_addr serv;
     unsigned serv_id;
     in_port_t serv_port;
-    //unsigned inst;
     Cache cache;
     PendingCmd pending_cmd[POLL_NUM_PSOCKS]; // same as type field of PktHdr
+    //struct in_addr clnt;
+    //struct in_addr serv;
+    //unsigned inst;
 } LogConn;
 
 typedef struct {
@@ -137,7 +137,12 @@ typedef struct {
 typedef struct {
     int sock;
     unsigned lc_id;
-} UserConnState;
+} UserClntConnState;
+
+typedef struct {
+    int sock;
+    unsigned lc_id;
+} UserServConnState;
 
 typedef struct {
     int user_lsock; // sock to get connections to user programs
@@ -145,8 +150,9 @@ typedef struct {
     PeerState peers[POLL_NUM_PSOCKS]; // peers in system, with sockets
     //int this_dev_idx; // index into peers for this device
     int n_peers; // number of valid contiguous elements in peers[]
-    UserConnState userconns[POLL_NUM_USOCKS]; // active (tracked) connections w/ user programs
-    Dict *logconns; // all logical connections in system (known by this device)
+    UserClntConnState user_clnt_conns[POLL_NUM_UCSOCKS]; // local user clients
+    UserServConnState user_serv_conns[POLL_NUM_USSOCKS]; // local user servers
+    Dict *log_conns; // all logical connections in system (known by this device)
 } ConnectivityState;
 
 #endif
