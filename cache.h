@@ -31,7 +31,7 @@ typedef struct {
 
 typedef struct {
     int fd;
-    CacheFileHeader *mmap_base;
+    CacheFileHeader *hdr_base;
     long long mmap_len;
 } OpenCacheFile;
 

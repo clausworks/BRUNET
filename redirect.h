@@ -49,7 +49,22 @@ typedef enum {
     PKTTYPE_LC_NEW = 1
 } PktType;
 
+
+/* Packet "within the system" carrying a payload
+ */
+typedef struct {
+    uint8_t type; // one of 
+    uint64_t lc_id; // connection this packet belongs to
+    uint8_t dir; // direction, 0 = client-to-server, 1 = server-to-client
+    uint64_t off; // offset in bytes of payload in connection's byte stream
+    uint16_t len; // number of bytes in payload
+} PktHdr;
+
+//TODO: check whether 64-bit unsigned offset will cause any problems
+
+
 #define PKT_MAX_LEN 1024
+#define USER_MAX_READ_LEN (PKT_MAX_LEN - sizeof(PktHdr))
 #define PEER_BUF_LEN 4096
 
 #define RDR_BUF_SIZE 4096
@@ -79,19 +94,6 @@ typedef enum {
 //#define MAX_USERCLNT_CONNS_LIFETIME (1 << 
 
 #define TFD_LEN_SEC 5
-
-/* Packet "within the system" carrying a payload
- */
-// TODO: use bitfield to save room
-typedef struct {
-    uint8_t type; // one of 
-    uint64_t lc_id; // connection this packet belongs to
-    uint8_t dir; // direction, 0 = client-to-server, 1 = server-to-client
-    uint64_t off; // offset in bytes of payload in connection's byte stream
-    // TODO: make offset 64-bit. Any restrictions?
-    uint16_t len; // number of bytes in payload
-    // TODO: make this 16-bit? What is max bytes
-} PktHdr;
 
 
 /* Logical connection (LC)

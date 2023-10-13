@@ -236,6 +236,8 @@ int cachefile_write(CacheFileHeader *f, char *buf, int buflen,
             }
         }
 
+        hex_dump("cachefile_write: memcpy", buf + written, nbytes, 16);
+
         memcpy(write_head, buf + written, nbytes);
         f->write += nbytes;
         remaining -= nbytes; // if remaining < empty, remaining==0 -> loop exits
@@ -424,7 +426,7 @@ int cache_init(Cache *cache, unsigned lc_id, /*struct in_addr peers[], */int n_p
         return -1;
     }
     _cachefile_init(f, n_peers);//, peers, n_peers);
-    cache->fwd.mmap_base = f;
+    cache->fwd.hdr_base = f;
 
     f = mmap(0, CACHE_DEFAULT_PAGES * _page_bytes,
         PROT_READ | PROT_WRITE, MAP_SHARED, cache->bkwd.fd, 0);
@@ -433,19 +435,19 @@ int cache_init(Cache *cache, unsigned lc_id, /*struct in_addr peers[], */int n_p
         return -1;
     }
     _cachefile_init(f, n_peers);//, peers, n_peers);
-    cache->bkwd.mmap_base = f;
+    cache->bkwd.hdr_base = f;
 
     return 0;
 }
 
 int cache_close(Cache *cache, ErrorStatus *e) {
     int status;
-    status = munmap(cache->fwd.mmap_base, cache->fwd.mmap_len);
+    status = munmap(cache->fwd.hdr_base, cache->fwd.mmap_len);
     if (status < 0) {
         err_msg_errno(e, "munmap fwd");
         return -1;
     }
-    status = munmap(cache->bkwd.mmap_base, cache->bkwd.mmap_len);
+    status = munmap(cache->bkwd.hdr_base, cache->bkwd.mmap_len);
     if (status < 0) {
         err_msg_errno(e, "munmap bkwd");
         return -1;
@@ -558,8 +560,8 @@ static int __test_caching_1() {
         err_show(&e);
         return -1;
     }
-    __print_cfhdr(cache.fwd.mmap_base);
-    __print_cfhdr(cache.bkwd.mmap_base);
+    __print_cfhdr(cache.fwd.hdr_base);
+    __print_cfhdr(cache.bkwd.hdr_base);
 
     cache_close(&cache, &e);
     return 0;
@@ -588,7 +590,7 @@ static int __test_caching_2() {
         return -1;
     }
 
-    f = cache.fwd.mmap_base;
+    f = cache.fwd.hdr_base;
 
     strcpy(wbuf, "Hello world");
     status = cachefile_write(f, wbuf, strlen(wbuf), &e);
@@ -635,7 +637,7 @@ static int __test_caching_3() {
         return -1;
     }
 
-    f = cache.fwd.mmap_base;
+    f = cache.fwd.hdr_base;
 
     __print_ll("active", f, f->ack / _blk_bytes * _blk_bytes);
     __print_ll("free", f, f->free_hd);
@@ -704,7 +706,7 @@ static int __test_caching_4(int nbytes) {
         return -1;
     }
 
-    f = cache.fwd.mmap_base;
+    f = cache.fwd.hdr_base;
 
     // setup
     memset(wbuf, 'a', nbytes);

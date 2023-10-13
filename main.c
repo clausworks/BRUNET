@@ -1043,14 +1043,18 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
 static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    char buf[4096];
+    char buf[USER_MAX_READ_LEN];
     ssize_t read_len;
+    LogConn *lc;
+    CacheFileHeader *cache_hdr;
+    unsigned lc_id;
+    int user_id;
 
     // TODO: write to cache (appropriate direction)
     // TODO: set POLLOUT
 
-    memset(buf, 0, sizeof(buf));
-    read_len = read(fds[fd_i].fd, buf, sizeof(buf));
+    //memset(buf, 0, sizeof(buf));
+    read_len = read(fds[fd_i].fd, buf, USER_MAX_READ_LEN);
     // EOF
     if (read_len == 0) {
         printf("Hit EOF (fd %d)\n", fds[fd_i].fd);
@@ -1066,11 +1070,44 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
         }
         else {
             printf("Faulty trigger for pollin\n");
+            return 0;
         }
     }
     // Normal
-    else {
-        printf("%d bytes read: [%s]\n", read_len, buf);
+    printf("%d bytes read: [%s]\n", read_len, buf);
+
+    // Get direction
+    switch (get_fd_type(state, fd_i)) {
+        case FDTYPE_USERSERV:
+            user_id = fd_i - POLL_USSOCKS_OFF;
+            lc_id = state->user_serv_conns[user_id].lc_id;
+            lc = (LogConn *)dict_get(state->log_conns, lc_id, e);
+            if (lc == NULL) {
+                err_msg_prepend(e, "FDTYPE_USSOCK POLLIN: ");
+                return -1;
+            }
+            cache_hdr = lc->cache.bkwd.hdr_base;
+            printf("Writing to cache file: bkwd");
+            break;
+        case FDTYPE_USERCLNT:
+            user_id = fd_i - POLL_UCSOCKS_OFF;
+            lc_id = state->user_clnt_conns[user_id].lc_id;
+            lc = (LogConn *)dict_get(state->log_conns, lc_id, e);
+            if (lc == NULL) {
+                err_msg_prepend(e, "FDTYPE_UCSOCK POLLIN: ");
+                return -1;
+            }
+            cache_hdr = lc->cache.fwd.hdr_base;
+            printf("Writing to cache file: fwd");
+            break;
+        default:
+            assert(0); // should never get here
+            break;
+    }
+
+    // Write to cache file
+    if (cachefile_write(cache_hdr, buf, read_len, e) < 0) {
+        return -1;
     }
 
     return 0;
