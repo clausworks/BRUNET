@@ -1014,13 +1014,13 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
 
     switch (state->peers[i].sock_status) {
     case PSOCK_CONNECTED: // already connected, data to write
-        receive_packet(state, fds, fd_i, e);
+        return receive_packet(state, fds, fd_i, e);
         break;
     case PSOCK_CONNECTING: // was connecting
     case PSOCK_WAITING:
     case PSOCK_INVALID:
     case PSOCK_THIS_DEVICE:
-        assert(0); // should never get here
+        assert(0);
         break;
     }
 
@@ -1028,7 +1028,7 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
     // a) Nonblocking connection attempt succeeded
     // b) TODO: data to write
     
-    return 0;
+    return -1;
 
 }
 
