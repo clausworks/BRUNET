@@ -883,7 +883,7 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
     // Handle later in poll
     // - Server connects
     // - Server refuses connection
-    assert(lc->serv_id == peer_id);
+    assert(lc->clnt_id == peer_id); // Non-SFN case
     sock = attempt_connect(state->peers[lc->serv_id].addr, lc->serv_port, e);
     if (sock < 0) {
         // TODO: close LC
