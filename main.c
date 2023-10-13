@@ -1017,9 +1017,13 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
         return receive_packet(state, fds, fd_i, e);
         break;
     case PSOCK_CONNECTING: // was connecting
+        printf("connecting\n");
     case PSOCK_WAITING:
+        printf("waiting\n");
     case PSOCK_INVALID:
+        printf("invalid\n");
     case PSOCK_THIS_DEVICE:
+        printf("this device\n");
         assert(0);
         break;
     }
