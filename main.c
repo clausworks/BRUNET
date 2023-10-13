@@ -1086,7 +1086,7 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
         return handle_pollin_listen(state, fds, fd_i, e);
     case FDTYPE_USERSERV:
     case FDTYPE_USERCLNT:
-        printf("FDTYPE_USERCLNT POLLIN\n");
+        printf("FDTYPE_USER**** POLLIN\n");
         if (has_so_error(fds[fd_i].fd, e)) {
             return handle_disconnect(state, fds, fd_i, e);
         }
@@ -1278,7 +1278,7 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
     case USSOCK_CONNECTING: // was connecting
         printf("handle_pollout_userserv: USSOCK_CONNECTING\n");
         fds[fd_i].events = POLLIN | POLLRDHUP;
-        state->peers[i].sock_status = USSOCK_CONNECTED;
+        state->user_serv_conns[i].sock_status = USSOCK_CONNECTED;
         printf("Connected (fd %d)\n", fds[fd_i].fd);
         break;
     case USSOCK_CONNECTED: // already connected, data to write
