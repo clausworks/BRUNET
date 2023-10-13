@@ -846,7 +846,6 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
     int peer_id = fd_i - POLL_PSOCKS_OFF;
     char *pktbuf = state->peers[peer_id].ibuf.buf;
     int sock;
-    int us_conn_i = -1;
 
     printf("add_lc_from_peer\n");
 
@@ -898,7 +897,7 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
             state->user_serv_conns[i].sock = sock;
             state->user_serv_conns[i].sock_status = USSOCK_CONNECTING;
 
-            fds[us_conn_i + POLL_USSOCKS_OFF].events = POLLOUT; // fd updated by update_poll_fds
+            fds[i + POLL_USSOCKS_OFF].events = POLLOUT; // fd updated by update_poll_fds
             break;
         }
     }
