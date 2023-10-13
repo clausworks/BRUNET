@@ -174,7 +174,7 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
         // that when the socket becomes writable, we must check SO_ERROR is 0
         // using getsockopt(2) to ensure the connection was successful.
         if (errno != EINPROGRESS) {
-            err_msg_errno(e, "connect");
+            err_msg_errno(e, "attempt_connect: connect (nonblocking)");
             return -1;
         }
     }
@@ -199,6 +199,12 @@ static FDType get_fd_type(ConnectivityState *state, int i) {
     end = start + POLL_NUM_UCSOCKS;
     if (i >= start && i < end) {
         return FDTYPE_USERCLNT;
+    }
+
+    start = POLL_USSOCKS_OFF;
+    end = start + POLL_NUM_USSOCKS;
+    if (i >= start && i < end) {
+        return FDTYPE_USERSERV;
     }
 
     start = POLL_PSOCKS_OFF;
@@ -269,7 +275,8 @@ void lc_set_id(LogConn *lc, unsigned inst, unsigned clnt_id) {
  * poll.
  */
 static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
-    struct pollfd *user_fds = fds + POLL_UCSOCKS_OFF;
+    struct pollfd *userclnt_fds = fds + POLL_UCSOCKS_OFF;
+    struct pollfd *userserv_fds = fds + POLL_USSOCKS_OFF;
     struct pollfd *peer_fds = fds + POLL_PSOCKS_OFF;
 
     assert(fds[POLL_LSOCK_U_IDX].events == POLLIN);
@@ -277,8 +284,10 @@ static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
 
     // Local user program sockets
     for (int i = 0; i < POLL_NUM_UCSOCKS; ++i) {
-        user_fds[i].fd = state->user_clnt_conns[i].sock;
-        // TODO: POLLHUP handler shouldn't have to set user_fds.
+        userclnt_fds[i].fd = state->user_clnt_conns[i].sock;
+    }
+    for (int i = 0; i < POLL_NUM_USSOCKS; ++i) {
+        userserv_fds[i].fd = state->user_serv_conns[i].sock;
     }
 
     // Proxy sockets from other peers
@@ -336,7 +345,6 @@ static int connect_to_peers(ConnectivityState *state, struct pollfd fds[], Error
         fds[i + POLL_PSOCKS_OFF].events = POLLOUT;
         state->peers[i].sock = s;
         state->peers[i].sock_status = PSOCK_CONNECTING;
-        // TODO: set POLLOUT
     }
 
     return 0;
@@ -452,6 +460,11 @@ static int init_connectivity_state(ConnectivityState *state,
         state->user_clnt_conns[i].sock = -1;
     }
 
+    for (int i = 0; i < POLL_NUM_USSOCKS; ++i) {
+        state->user_serv_conns[i].sock = -1;
+        state->user_serv_conns[i].sock_status = USSOCK_INVALID;
+    }
+
     state->log_conns = dict_create(e);
     if (state->log_conns == NULL) {
         return -1;
@@ -506,7 +519,9 @@ static int create_reconnect_timer(ErrorStatus *e) {
 
 /* Error at the connection level that results in an invalid connection. Close
  * the connection and update the appropriate lists so that it's no longer
- * polled. TODO: get ACKs for read/write and possibly finish sending/receiving
+ * polled.
+ *
+ * TODO: get ACKs for read/write and possibly finish sending/receiving
  * data.
  */
 static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
@@ -531,6 +546,12 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERCLNT:
         i = fd_i - POLL_UCSOCKS_OFF;
         state->user_clnt_conns[i].sock = -1;
+        // TODO: close LC
+        break;
+    case FDTYPE_USERSERV:
+        i = fd_i - POLL_USSOCKS_OFF;
+        state->user_serv_conns[i].sock = -1;
+        // TODO: close LC
         break;
     case FDTYPE_PEER:
         // Instead of setting sock as invalid, set timer for reconnect
@@ -593,7 +614,7 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
  * (using getsockopt). sock is stored in user_clnt_conns array, and the logical
  * connection entry is stored in the log_conns dictionary.
  */
-static int handle_new_userconn(ConnectivityState *state, struct pollfd fds[],
+static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
     int sock, ErrorStatus *e) {
 
     static unsigned _next_inst = 0;
@@ -620,7 +641,7 @@ static int handle_new_userconn(ConnectivityState *state, struct pollfd fds[],
 
     lc = malloc(sizeof(LogConn));
     if (lc == NULL) {
-        err_msg_errno(e, "handle_new_userconn: malloc");
+        err_msg_errno(e, "handle_new_userclnt: malloc");
         return -1;
     }
     memset(lc, 0, sizeof(LogConn));
@@ -671,7 +692,7 @@ static int handle_new_userconn(ConnectivityState *state, struct pollfd fds[],
 
     // Init cache
     if (cache_init(&lc->cache, lc->id, state->n_peers, e) < 0) {
-        err_msg_prepend(e, "handle_new_userconn: ");
+        err_msg_prepend(e, "handle_new_userclnt: ");
         return -1;
     }
     /* END LC init */
@@ -679,7 +700,7 @@ static int handle_new_userconn(ConnectivityState *state, struct pollfd fds[],
 
     // Add LC to dictionary
     if (dict_insert(state->log_conns, lc->id, lc, e) < 0) {
-        err_msg_prepend(e, "handle_new_userconn: ");
+        err_msg_prepend(e, "handle_new_userclnt: ");
         return -1;
     }
 
@@ -804,7 +825,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
 
     switch (fd_i) {
     case POLL_LSOCK_U_IDX:
-        if (handle_new_userconn(state, fds, sock, e) < 0) {
+        if (handle_new_userclnt(state, fds, sock, e) < 0) {
             return -1;
         }
         break; 
@@ -824,6 +845,10 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
 
     int peer_id = fd_i - POLL_PSOCKS_OFF;
     char *pktbuf = state->peers[peer_id].ibuf.buf;
+    int sock;
+    int us_conn_i = -1;
+
+    printf("add_lc_from_peer\n");
 
     PktHdr *hdr = (PktHdr *)(pktbuf);
     LogConn *lc_buf = (LogConn *)(pktbuf + sizeof(PktHdr));
@@ -836,6 +861,7 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
 
     memset(lc, 0, sizeof(LogConn));
 
+    assert(lc_buf->id == hdr->lc_id);
     lc->id = lc_buf->id;
     lc->clnt_id = lc_buf->clnt_id;
     lc->serv_id = lc_buf->serv_id;
@@ -857,9 +883,29 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
     // Handle later in poll
     // - Server connects
     // - Server refuses connection
-    //
-    // May need new list of local serv conns
-    // Maybe rename "user" conns as local clnt conns
+    assert(lc->serv_id == peer_id);
+    sock = attempt_connect(state->peers[lc->serv_id].addr, lc->serv_port, e);
+    if (sock < 0) {
+        // TODO: close LC
+        return -1;
+        // TODO: set interval on timer to repeat (auto retry)
+    }
+
+    // Find first available slot
+    for (int i = 0; i < POLL_NUM_USSOCKS; ++i) {
+        if (state->user_serv_conns[i].sock < 0) {
+            state->user_serv_conns[i].lc_id = lc->id;
+            state->user_serv_conns[i].sock = sock;
+            state->user_serv_conns[i].sock_status = USSOCK_CONNECTING;
+
+            fds[us_conn_i + POLL_USSOCKS_OFF].events = POLLOUT; // fd updated by update_poll_fds
+            break;
+        }
+    }
+
+    // When connect succeeds, POLLOUT will be triggered.
+    // This will be the case even if it has already succeeded.
+    return 0;
 }
 
 static int process_packet(ConnectivityState *state, struct pollfd fds[],
@@ -951,11 +997,14 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
 
     // Have full packet
     printf("Processing packet...\n");
-
-    // Cleanup
-    reset_pktreadbuf(buf);
-
-    return 0;
+    if (process_packet(state, fds, fd_i, e) < 0) {
+        reset_pktreadbuf(buf);
+        return -1;
+    }
+    else {
+        reset_pktreadbuf(buf);
+        return 0;
+    }
 }
 
 static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
@@ -984,11 +1033,18 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
 
 }
 
+/* Handle a readable socket event from either a client or server user program.
+ * Write the bytes to a cache file and set POLLOUT so these get sent to a peer
+ * at the next available opportunity.
+ */
 static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     char buf[4096];
     ssize_t read_len;
+
+    // TODO: write to cache (appropriate direction)
+    // TODO: set POLLOUT
 
     memset(buf, 0, sizeof(buf));
     read_len = read(fds[fd_i].fd, buf, sizeof(buf));
@@ -1025,6 +1081,7 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_LISTEN:
         printf("FDTYPE_LISTEN POLLIN\n");
         return handle_pollin_listen(state, fds, fd_i, e);
+    case FDTYPE_USERSERV:
     case FDTYPE_USERCLNT:
         printf("FDTYPE_USERCLNT POLLIN\n");
         if (has_so_error(fds[fd_i].fd, e)) {
@@ -1207,6 +1264,32 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
+static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int i;
+
+    i = fd_i - POLL_USSOCKS_OFF;
+
+    switch (state->user_serv_conns[i].sock_status) {
+    case USSOCK_CONNECTING: // was connecting
+        printf("handle_pollout_userserv: USSOCK_CONNECTING\n");
+        fds[fd_i].events = POLLIN | POLLRDHUP;
+        state->peers[i].sock_status = USSOCK_CONNECTED;
+        printf("Connected (fd %d)\n", fds[fd_i].fd);
+        break;
+    case USSOCK_CONNECTED: // already connected, data to write
+        printf("handle_pollout_userserv: USSOCK_CONNECTED\n");
+        // TODO: packetize/cache/send data from server
+        break;
+    case PSOCK_INVALID:
+        assert(0); // should never get here
+        break;
+    }
+
+    return 0;
+}
+
 static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -1248,23 +1331,23 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
     // TODO: make this selective?
     fds[fd_i].events &= ~POLLOUT;
 
+    if (has_so_error(fds[fd_i].fd, e)) {
+        return handle_disconnect(state, fds, fd_i, e);
+    }
+
     switch(get_fd_type(state, fd_i)) {
         break;
     case FDTYPE_USERCLNT:
-        // a) Nonblocking connection attempt succeeded
         printf("FDTYPE_USERCLNT POLLOUT\n");
-        if (has_so_error(fds[fd_i].fd, e)) {
-            return handle_disconnect(state, fds, fd_i, e);
-        }
-        // b) TODO: data to write
+        // TODO: write data from LC
         break;
+    case FDTYPE_USERSERV:
+        // a) Nonblocking connection attempt succeeded
+        // b) TODO: data to write
+        return handle_pollout_userserv(state, fds, fd_i, e);
     case FDTYPE_PEER:
         printf("FDTYPE_PEER POLLOUT\n");
-        if (has_so_error(fds[fd_i].fd, e)) {
-            return handle_disconnect(state, fds, fd_i, e);
-        }
         return handle_pollout_peer(state, fds, fd_i, e);
-        break;
     case FDTYPE_TIMER:
     case FDTYPE_LISTEN:
         printf("unsupported POLLOUT type\n");

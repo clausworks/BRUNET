@@ -21,8 +21,15 @@ typedef enum {
 } PeerSockStatus;
 
 typedef enum {
+    USSOCK_INVALID,
+    USSOCK_CONNECTING,
+    USSOCK_CONNECTED
+} UserServSockStatus;
+
+typedef enum {
     FDTYPE_LISTEN,
     FDTYPE_USERCLNT,
+    FDTYPE_USERSERV,
     FDTYPE_PEER,
     FDTYPE_TIMER
 } FDType;
@@ -142,6 +149,7 @@ typedef struct {
 typedef struct {
     int sock;
     unsigned lc_id;
+    UserServSockStatus sock_status;
 } UserServConnState;
 
 typedef struct {
