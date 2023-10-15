@@ -198,6 +198,8 @@ static int _extend_active_list(CacheFileHeader *f, ErrorStatus *e) {
 /* Write a buffer to the cache file. Write begins at tail of active list, at the
  * write head. Write will continue into additional free blocks as necessary. The
  * file will be expanded to create additional free blocks if none are left.
+ *
+ * Returns 0 on success, -1 on failiure.
  */
 int cachefile_write(CacheFileHeader *f, char *buf, int buflen,
     ErrorStatus *e) {
@@ -247,6 +249,10 @@ int cachefile_write(CacheFileHeader *f, char *buf, int buflen,
         if (f->write % _blk_bytes == 0) {
             f->write = f->act_tl + sizeof(CacheFileBlock);
         }
+    }
+
+    for (int i = 0; i < CF_MAX_DEVICES; ++i) {
+        f->readlen[i] += written;
     }
 
     return 0;
@@ -328,7 +334,18 @@ int cachefile_read(CacheFileHeader *f, /*struct in_addr peer*/ int peer_id, char
         }
     }
 
+    f->readlen[p] -= total;
+    assert(f->readlen[p] >= 0);
+
     return total;
+}
+
+long long cachefile_get_readlen(CacheFileHeader *f, int peer_id) {
+    return f->readlen[peer_id];
+}
+
+long long cachefile_get_readoff(CacheFileHeader *f, int peer_id) {
+    return f->read[peer_id];
 }
 
 int cachefile_ack(CacheFileHeader *f) {

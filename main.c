@@ -645,6 +645,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
     memset(lc, 0, sizeof(LogConn));
+    // Note: memset sets commands to PEND_NONE/PEND_NODATA
 
     /* BEGIN LC init */
     //lc->clnt = clntaddr.sin_addr;
@@ -717,7 +718,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
     // If we got here, no slots in user_clnt_conns were available
     close(sock);
     free(dict_pop(state->log_conns, lc->id, e));
-    err_msg(e, "Number of user connections exceeded max (%d)",
+    err_msg(e, "Number of user client connections exceeded max (%d)",
         POLL_NUM_UCSOCKS);
     return -1;
 }
@@ -898,29 +899,78 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
             state->user_serv_conns[i].sock_status = USSOCK_CONNECTING;
 
             fds[i + POLL_USSOCKS_OFF].events = POLLOUT; // fd updated by update_poll_fds
-            break;
+            return 0;
         }
     }
 
+    close(sock);
+    free(dict_pop(state->log_conns, lc->id, e));
+    err_msg(e, "Number of user server connections exceeded max (%d)",
+        POLL_NUM_UCSOCKS);
+    return -1;
+
     // When connect succeeds, POLLOUT will be triggered.
     // This will be the case even if it has already succeeded.
-    return 0;
+}
+
+static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int peer_id = fd_i - POLL_PSOCKS_OFF;
+    PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
+    char *payload = state->peers[peer_id].ibuf.buf + sizeof(PktHdr);
+    CacheFileHeader *f;
+
+    LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
+    if (lc == NULL) {
+        err_msg_prepend(e, "cache_data: ");
+        return -1;
+    }
+    
+    switch (hdr->dir) {
+    case PKTDIR_FWD:
+        assert(lc->serv_id == peer_id); // non-SFN
+        f = lc->cache.fwd.hdr_base;
+        // TODO: speed this up by sorting list and doing a bsearch?
+        for (int dst = 0; dst < POLL_NUM_USSOCKS; ++dst) {
+            if (state->user_serv_conns[dst].lc_id == lc->lc_id) {
+                assert(state->user_serv_conns[dst].sock >= 0);
+                fds[dst + POLL_USSOCKS_OFF].events = |= POLLOUT;
+            }
+        }
+        break;
+    case PKTDIR_BKWD:
+        assert(lc->clnt_id == peer_id); // non-SFN
+        f = lc->cache.bkwd.hdr_base;
+        // TODO: speed this up by sorting list and doing a bsearch?
+        for (int dst = 0; dst < POLL_NUM_UCSOCKS; ++dst) {
+            if (state->user_clnt_conns[dst].lc_id == lc->lc_id) {
+                assert(state->user_clnt_conns[dst].sock >= 0);
+                fds[dst + POLL_USSOCKS_OFF].events = |= POLLOUT;
+            }
+        }
+        break;
+    default:
+        assert(0);
+    }
+
+    return cachefile_write(f, payload, hdr->len);
 }
 
 static int process_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    int peer_id = fd_i - POLL_PSOCKS_OFF;
-    PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
-
     switch (hdr->type) {
     case PKTTYPE_DATA:
         printf("PKTTYPE_DATA\n");
+        return process_data_packet(state, fds, fd_i, e);
         break;
     case PKTTYPE_LC_NEW:
         printf("PKTTYPE_LC_NEW\n");
         return add_lc_from_peer(state, fds, fd_i, e);
         break;
+    default:
+        assert(0); // should never get here
     }
 
     return 0;
@@ -1017,14 +1067,11 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
         return receive_packet(state, fds, fd_i, e);
         break;
     case PSOCK_CONNECTING: // was connecting
-        printf("connecting\n");
     case PSOCK_WAITING:
-        printf("waiting\n");
     case PSOCK_INVALID:
-        printf("invalid\n");
     case PSOCK_THIS_DEVICE:
-        printf("this device\n");
-        assert(0);
+    default:
+        assert(0); // should never happen
         break;
     }
 
@@ -1043,18 +1090,19 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
 static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    char buf[USER_MAX_READ_LEN];
+    char buf[PKT_MAX_PAYLOAD_LEN];
     ssize_t read_len;
     LogConn *lc;
     CacheFileHeader *cache_hdr;
     unsigned lc_id;
-    int user_id;
+    unsigned user_id;
+    unsigned peer_id;
 
     // TODO: write to cache (appropriate direction)
     // TODO: set POLLOUT
 
     //memset(buf, 0, sizeof(buf));
-    read_len = read(fds[fd_i].fd, buf, USER_MAX_READ_LEN);
+    read_len = read(fds[fd_i].fd, buf, PKT_MAX_PAYLOAD_LEN);
     // EOF
     if (read_len == 0) {
         printf("Hit EOF (fd %d)\n", fds[fd_i].fd);
@@ -1087,6 +1135,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
                 return -1;
             }
             cache_hdr = lc->cache.bkwd.hdr_base;
+            peer_id = lc->clnt_id;
             printf("Writing to cache file: bkwd");
             break;
         case FDTYPE_USERCLNT:
@@ -1098,6 +1147,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
                 return -1;
             }
             cache_hdr = lc->cache.fwd.hdr_base;
+            peer_id = lc->serv_id;
             printf("Writing to cache file: fwd");
             break;
         default:
@@ -1109,6 +1159,10 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     if (cachefile_write(cache_hdr, buf, read_len, e) < 0) {
         return -1;
     }
+
+    // Trigger pollout on destination socket (non-SFN)
+    fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+    lc->pending_data[peer_id] = PEND_DATA;
 
     return 0;
 }
@@ -1257,8 +1311,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // Handle pending commands
             // Command: new logical connection
             if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
-                pktlen = sizeof(PktHdr) + sizeof(LogConn);
                 // Copy to output buf only if there's enough space
+                pktlen = sizeof(PktHdr) + sizeof(LogConn);
                 if (obuf_get_empty(&peer->obuf) > pktlen) {
                     //char fakebuf[1024];
                     PktHdr hdr = {
@@ -1284,6 +1338,50 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     // LC to the head of the queue so it gets considered sooner.
 
                     // TODO: optimize loop for non-SFN case?
+                }
+            }
+            else if (lc->pending_data[peer_id] == PEND_DATA) {
+                char buf[PKT_MAX_PAYLOAD_LEN];
+                int nbytes, obufempty;
+                CacheFileHeader *f;
+                PktHdr hdr = {
+                    .type = PKTTYPE_DATA,
+                    .lc_id = lc->id,
+                    //set .dir later
+                    //set .off later
+                    .len = sizeof(LogConn)
+                };
+
+                obufempty = obuf_get_empty(&peer->obuf);
+                if (obufempty > sizeof(PktHdr) + 1) {
+                    // Determine direction (peer_id is destination)
+                    if (lc->serv_id == peer_id) {
+                        hdr.dir = PKTDIR_FWD;
+                        f = lc->cache.fwd.hdr_base;
+                    }
+                    else if (lc->clnt_id == peer_id) {
+                        hdr.dir = PKTDIR_BKWD;
+                        f = lc->cache.bkwd.hdr_base;
+                    }
+                    else {
+                        assert(0); // Should not reach in non-SFN case
+                    }
+
+                    // Copy header to output buffer
+                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+
+                    // Read bytes into temporary buffer
+                    nbytes = cachefile_get_readlen(f, peer_id);
+                    if (PKT_MAX_PAYLOAD_LEN < nbytes) {
+                        nbytes = PKT_MAX_PAYLOAD_LEN;
+                    }
+                    if (obufempty < nbytes) {
+                        nbytes = obufempty;
+                    }
+                    // This should always succeed, since nbytes <= readlen
+                    hdr.off = cachefile_get_readoff(f, peer_id);
+                    assert(nbytes == cachefile_read(f, peer_id, buf, nbytes, e));
+                    copy_to_obuf(&peer->obuf, buf, nbytes);
                 }
             }
         }
@@ -1320,7 +1418,7 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
         break;
     case USSOCK_CONNECTED: // already connected, data to write
         printf("handle_pollout_userserv: USSOCK_CONNECTED\n");
-        // TODO: packetize/cache/send data from server
+        // TODO: read from cache and write to server socket
         break;
     case PSOCK_INVALID:
         assert(0); // should never get here
@@ -1380,6 +1478,8 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERCLNT:
         printf("FDTYPE_USERCLNT POLLOUT\n");
         // TODO: write data from LC
+        // handle_pollout_userclnt
+        // write data to user
         break;
     case FDTYPE_USERSERV:
         // a) Nonblocking connection attempt succeeded

@@ -21,6 +21,7 @@ typedef struct {
     int n_peers;
     //struct in_addr peers[CF_MAX_DEVICES];
     long long read[CF_MAX_DEVICES]; // read offsets for peers: next byte to read
+    long long readlen[CF_MAX_DEVICES]; // read offsets for peers: next byte to read
     long long write;   // write offset: next available byte to write to
     long long ack;     // ack offset: last byte acked
 } CacheFileHeader;
@@ -45,6 +46,8 @@ int cache_init(Cache *, unsigned, int, ErrorStatus *);
 int cache_close(Cache *, ErrorStatus *e);
 int cachefile_read(CacheFileHeader *f, int, char *, int, ErrorStatus *);
 int cachefile_write(CacheFileHeader *f, char *, int, ErrorStatus *);
+long long cachefile_get_readlen(CacheFileHeader *f, int);
+long long cachefile_get_readoff(CacheFileHeader *f, int);
 
 #ifdef __TEST
 void __test_caching(void);

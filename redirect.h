@@ -35,9 +35,14 @@ typedef enum {
 } FDType;
 
 typedef enum {
-    PEND_NONE,
-    PEND_LC_NEW,
+    PEND_NONE = 0,
+    PEND_LC_NEW = 1,
 } PendingCmd;
+
+typedef enum {
+    PEND_NODATA = 0,
+    PEND_DATA = 1,
+} PendingData;
 
 typedef enum {
     PKTDIR_FWD = 0,
@@ -64,10 +69,10 @@ typedef struct {
 
 
 #define PKT_MAX_LEN 1024
-#define USER_MAX_READ_LEN (PKT_MAX_LEN - sizeof(PktHdr))
+#define PKT_MAX_PAYLOAD_LEN (PKT_MAX_LEN - sizeof(PktHdr))
 #define PEER_BUF_LEN 4096
 
-#define RDR_BUF_SIZE 4096
+//#define RDR_BUF_SIZE 4096
 
 #define POLL_LSOCK_U_IDX 0
 #define POLL_LSOCK_P_IDX 1
@@ -110,6 +115,7 @@ typedef struct {
     in_port_t serv_port;
     Cache cache;
     PendingCmd pending_cmd[POLL_NUM_PSOCKS]; // same as type field of PktHdr
+    PendingData pending_data[POLL_NUM_PSOCKS];
     //struct in_addr clnt;
     //struct in_addr serv;
     //unsigned inst;
