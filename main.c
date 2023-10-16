@@ -713,6 +713,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             // Key used to lookup LC in dict
             state->user_clnt_conns[i].lc_id = lc->id;
             state->user_clnt_conns[i].sock = sock;
+            fds[i + POLL_UCSOCKS_OFF].events = POLLIN | POLLRDHUP;
             return 0;
         }
     }
