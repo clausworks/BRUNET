@@ -263,7 +263,7 @@ int cachefile_write(CacheFileHeader *f, char *buf, int buflen,
  *
  * Returns: the number of bytes read, or -1 on error.
  */
-int cachefile_read(CacheFileHeader *f, /*struct in_addr peer*/ int peer_id, char *buf,
+int cachefile_read(CacheFileHeader *f, int peer_id, char *buf,
     int buflen, ErrorStatus *e) {
 
     char *read_head;

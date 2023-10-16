@@ -127,8 +127,9 @@ typedef struct {
     int r;
     int w;
     int a;
+    long long last_acked;
     struct iovec vecbuf[2];
-} PktWriteBuf;
+} WriteBuf;
 
 typedef struct {
     char buf[PEER_BUF_LEN];
@@ -144,7 +145,7 @@ typedef struct {
     unsigned long long total_sent;
     unsigned long long total_acked;
     dictiter_t lc_iter;
-    PktWriteBuf obuf;
+    WriteBuf obuf;
     PktReadBuf ibuf;
 } PeerState;
 
@@ -158,6 +159,7 @@ typedef struct {
     int sock;
     unsigned lc_id;
     UserServSockStatus sock_status;
+    WriteBuf obuf;
 } UserServConnState;
 
 typedef struct {
