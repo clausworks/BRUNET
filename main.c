@@ -379,6 +379,7 @@ static void reset_pktreadbuf(PktReadBuf *rbuf) {
 static void reset_writebuf(WriteBuf *wbuf) {
     memset(wbuf, 0, sizeof(WriteBuf));
     wbuf->len = PEER_BUF_LEN;
+    wbuf->last_acked = 1; // 1 for handshake byte
 }
 
 static void add_peer(ConnectivityState *state, int *p,
@@ -1226,6 +1227,11 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
 
     if (bytes_acked(sock, &current_acked, e) < 0) {
         err_msg_prepend(e, "obuf_update_ack: ");
+        return -1;
+    }
+
+    if (current_acked == 0) {
+        err_msg(e, "bytes_acked: handshake not completed (acked = 0)");
         return -1;
     }
 
