@@ -1089,7 +1089,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         // Read payload (or remaining bytes thereof)
         else {
             hdr = (PktHdr *)(buf->buf);
-            nbytes = hdr->len - (buf->w + sizeof(PktHdr));
+            nbytes = hdr->len - (buf->w - sizeof(PktHdr));
 
             //assert(nbytes < buf->len - buf->w);
 
