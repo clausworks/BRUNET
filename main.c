@@ -1098,7 +1098,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         }
 
         read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
-        printf("%d bytes read (fd %d)\n", read_len, fds[fd_i].fd);
+        printf("%d bytes read, %d attempted (fd %d)\n", read_len, nbytes, fds[fd_i].fd);
         hex_dump(NULL, buf->buf + buf->w, read_len, 16);
         buf->w += nbytes;
 
