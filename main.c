@@ -1317,7 +1317,7 @@ static int obuf_get_unread(WriteBuf *buf) {
 }
 
 static int obuf_get_unacked(WriteBuf *buf) {
-    if (buf->a <= buf->r) {
+    if (buf->r >= buf->a) {
         return buf->r - buf->a;
     }
     else {
@@ -1346,7 +1346,7 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
         ack_increment -= 1;
     }
 
-    assert(ack_increment < obuf_get_unacked(buf));
+    assert(ack_increment <= obuf_get_unacked(buf));
 
     buf->a = (buf->a + ack_increment) % buf->len;
 
