@@ -1614,12 +1614,12 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         }
 
         obuf_empty = obuf_get_empty(&conn_state->obuf);
-        if (nbytes < obuf_empty) {
+        if (obuf_empty < nbytes) {
             nbytes = obuf_empty;
         }
 
         read_avail = cachefile_get_readlen(lc->cache.fwd.hdr_base, lc->serv_id);
-        if (nbytes < read_avail) {
+        if (read_avail < nbytes) {
             nbytes = read_avail;
         }
 
