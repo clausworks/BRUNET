@@ -493,6 +493,42 @@ static bool has_so_error(int sock, ErrorStatus *e) {
     return false;
 }
 
+static int set_so_nodelay(int sock, ErrorStatus *e) {
+    int one = 1;
+    int status;
+
+    status = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    if (status < 0) {
+        err_msg_errno(e, "set_so_nodelay");
+        return -1;
+    }
+    return 0;
+}
+
+static int set_so_quickack(int sock, ErrorStatus *e) {
+    int value = 1;
+    socklen_t optlen = sizeof(int);
+    int status;
+
+    status = getsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, &value, &optlen);
+    if (status < 0) {
+        err_msg_errno(e, "set_so_quickack: getsockopt");
+        return -1;
+    }
+
+    //printf("TCP_QUICKACK: optlen = %u\n", optlen);
+
+    if (value) {
+        status = setsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, &value, sizeof(int));
+        if (status < 0) {
+            err_msg_errno(e, "set_so_quickack: setsockopt");
+            return -1;
+        }
+        //printf("Enabled TCP_QUICKACK\n");
+    }
+
+    return 0;
+}
 
 /******************************************************************************
  * POLL HANDLER FUNCTIONS
@@ -770,6 +806,50 @@ static int handle_peer_conn(ConnectivityState *state, int sock,
     return 0;
 }
 
+static int block_till_connected(int sock, ErrorStatus *e) {
+    long long unsigned n;
+    unsigned total_ms = 0;
+    /*struct timespec sleep_len = {
+        .tv_sec = 0,
+        .tv_nsec = 1e6 // 1ms
+    };*/
+
+    while (1) {
+        /*
+        if (set_so_quickack(sock, e) < 0) {
+            err_msg_prepend(e, "block_till_connected: ");
+            return -1;
+        }
+        */
+
+        n = 0;
+        if (bytes_acked(sock, &n, e) < 0) {
+            err_msg_prepend(e, "block_till_connected: ");
+            return -1;
+        }
+
+        if (n >= 1) {
+            break;
+        }
+
+        if (usleep(1e3) < 0) {
+            assert(errno = EINTR); // alternative, errno == EINVAL, shouldn't happen
+            printf("usleep: returned early\n");
+        }
+
+        ++total_ms;
+    }
+
+    if (total_ms > 0) {
+        printf("blocked %u ms for handshake\n", total_ms);
+    }
+    else {
+        printf("didn't block for handshake\n");
+    }
+
+    return 0;
+}
+
 static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -781,6 +861,11 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
 
     // Accept
     sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
+    if (set_so_nodelay(sock, e) < 0) { return -1; }
+    if (block_till_connected(sock, e) < 0) {
+        return -1;
+    }
+    //if (set_so_quickack(sock, e) < 0) { return -1; }
 
     // Set nonblocking
     if (fcntl(sock, F_SETFL, O_NONBLOCK) < 0) {
@@ -1340,16 +1425,23 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     if (peer->lc_iter == NULL) {
         peer->lc_iter = dict_iter_new(lcs);
         if (peer->lc_iter == NULL) {
-            err_msg(e, "stage_packet: no logical connections");
+            err_msg(e, "send_packet: no logical connections");
             return -1;
         }
     }
 
     // Update obuf ack counter
+    printf("0 begin obuf_update_ack\n");
     if (obuf_update_ack(&peer->obuf, peer->sock, e) < 0) {
+        // debug
+        printf("1\n");
+        assert(set_so_quickack(peer->sock, e) == 0);
+        printf("2\n");
         err_msg_prepend(e, "send_packet: ");
+        printf("3\n");
         return -1;
     }
+    printf("4\n");
     
     // Continue loop, potentially from last time
     while (1) {
@@ -1443,6 +1535,9 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // gets reviewed again sooner. May need to check for loops here, or
             // possibly add a int for a priority level to check first.
         }
+        else {
+            // SFN case only -- sending to peer that isn't final destination
+        }
 
         if (!dict_iter_hasnext(peer->lc_iter)) {
             break;
@@ -1450,7 +1545,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         else {
             peer->lc_iter = dict_iter_next(peer->lc_iter);
         }
-    }
+    } // end while
 
     // After assembling packets, write buffer
     if (writev_from_obuf(&peer->obuf, peer->sock, e) < 0) {
