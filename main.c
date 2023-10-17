@@ -1308,22 +1308,20 @@ static int obuf_get_empty(WriteBuf *buf) {
 }
 
 static int obuf_get_unread(WriteBuf *buf) {
-    // Subtract 1 -- byte at a-1 is always empty
-    // We need a spare byte to differentiate between empty and full
     if (buf->r <= buf->w) {
-        return buf->r - buf->w + buf->len;
+        return buf->w - buf->r;
     }
     else {
-        return buf->r - buf->w;
+        return buf->w - buf->r + buf->len;
     }
 }
 
 static int obuf_get_unacked(WriteBuf *buf) {
     if (buf->a <= buf->r) {
-        return buf->r - buf->a + buf->len;
+        return buf->r - buf->a;
     }
     else {
-        return buf->r - buf->a;
+        return buf->r - buf->a + buf->len;
     }
 }
 
@@ -1386,8 +1384,9 @@ static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
     }
     // No bytes to write
     else {
-        n_seqs = 0;
+        //n_seqs = 0;
         printf("No bytes to write to peer\n");
+        return 0;
     }
 
     // Perform write
@@ -1458,17 +1457,10 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     }
 
     // Update obuf ack counter
-    printf("0 begin obuf_update_ack\n");
     if (obuf_update_ack(&peer->obuf, peer->sock, e) < 0) {
-        // debug
-        printf("1\n");
-        //assert(set_so_quickack(peer->sock, e) == 0);
-        printf("2\n");
         err_msg_prepend(e, "send_packet: ");
-        printf("3\n");
         return -1;
     }
-    printf("4\n");
     
     // Continue loop, potentially from last time
     while (1) {
@@ -1570,7 +1562,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // possibly add a int for a priority level to check first.
         }
         else {
-            // SFN case only -- sending to peer that isn't final destination
+            // TODO [future work]: SFN case only -- sending to peer that isn't final destination
         }
 
         // Advance LC iterator
