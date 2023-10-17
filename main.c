@@ -1004,7 +1004,7 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
 static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    int peer_id = fd_i - POLL_PSOCKS_OFF;
+    int peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
     char *payload = state->peers[peer_id].ibuf.buf + sizeof(PktHdr);
     CacheFileHeader *f;
@@ -1017,7 +1017,7 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     
     switch (hdr->dir) {
     case PKTDIR_FWD:
-        assert(lc->serv_id == peer_id); // non-SFN
+        assert(lc->clnt_id == peer_id); // non-SFN
         f = lc->cache.fwd.hdr_base;
         // TODO: speed this up by sorting list and doing a bsearch?
         for (int dst = 0; dst < POLL_NUM_USSOCKS; ++dst) {
@@ -1028,7 +1028,7 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
         }
         break;
     case PKTDIR_BKWD:
-        assert(lc->clnt_id == peer_id); // non-SFN
+        assert(lc->serv_id == peer_id); // non-SFN
         f = lc->cache.bkwd.hdr_base;
         // TODO: speed this up by sorting list and doing a bsearch?
         for (int dst = 0; dst < POLL_NUM_UCSOCKS; ++dst) {
