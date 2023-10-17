@@ -379,7 +379,7 @@ static void reset_pktreadbuf(PktReadBuf *rbuf) {
 static void reset_writebuf(WriteBuf *wbuf) {
     memset(wbuf, 0, sizeof(WriteBuf));
     wbuf->len = PEER_BUF_LEN;
-    wbuf->last_acked = 1; // 1 for handshake byte
+    wbuf->last_acked = 0;
 }
 
 static void add_peer(ConnectivityState *state, int *p,
@@ -505,6 +505,7 @@ static int set_so_nodelay(int sock, ErrorStatus *e) {
     return 0;
 }
 
+/*
 static int set_so_quickack(int sock, ErrorStatus *e) {
     int value = 1;
     socklen_t optlen = sizeof(int);
@@ -529,6 +530,7 @@ static int set_so_quickack(int sock, ErrorStatus *e) {
 
     return 0;
 }
+*/
 
 /******************************************************************************
  * POLL HANDLER FUNCTIONS
@@ -806,21 +808,20 @@ static int handle_peer_conn(ConnectivityState *state, int sock,
     return 0;
 }
 
+/*
 static int block_till_connected(int sock, ErrorStatus *e) {
     long long unsigned n;
     unsigned total_ms = 0;
-    /*struct timespec sleep_len = {
-        .tv_sec = 0,
-        .tv_nsec = 1e6 // 1ms
-    };*/
+    //struct timespec sleep_len = {
+        //.tv_sec = 0,
+        //.tv_nsec = 1e6 // 1ms
+    //};
 
     while (1) {
-        /*
-        if (set_so_quickack(sock, e) < 0) {
-            err_msg_prepend(e, "block_till_connected: ");
-            return -1;
-        }
-        */
+        //if (set_so_quickack(sock, e) < 0) {
+            //err_msg_prepend(e, "block_till_connected: ");
+            //return -1;
+        //}
 
         n = 0;
         if (bytes_acked(sock, &n, e) < 0) {
@@ -849,6 +850,7 @@ static int block_till_connected(int sock, ErrorStatus *e) {
 
     return 0;
 }
+*/
 
 static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
@@ -862,9 +864,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     // Accept
     sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
     if (set_so_nodelay(sock, e) < 0) { return -1; }
-    if (block_till_connected(sock, e) < 0) {
-        return -1;
-    }
+    //if (block_till_connected(sock, e) < 0) { return -1; }
     //if (set_so_quickack(sock, e) < 0) { return -1; }
 
     // Set nonblocking
@@ -1316,12 +1316,18 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
         return -1;
     }
 
-    if (current_acked == 0) {
+    /*if (current_acked == 0) {
         err_msg(e, "bytes_acked: handshake not completed (acked = 0)");
         return -1;
-    }
+    }*/
 
     ack_increment = current_acked - buf->last_acked;
+    
+    // Subtract handshake byte (only once)
+    if (buf->last_acked == 0 && current_acked >= 1) {
+        ack_increment -= 1;
+    }
+
     assert(ack_increment < obuf_get_unacked(buf));
 
     buf->a = (buf->a + ack_increment) % buf->len;
@@ -1435,7 +1441,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     if (obuf_update_ack(&peer->obuf, peer->sock, e) < 0) {
         // debug
         printf("1\n");
-        assert(set_so_quickack(peer->sock, e) == 0);
+        //assert(set_so_quickack(peer->sock, e) == 0);
         printf("2\n");
         err_msg_prepend(e, "send_packet: ");
         printf("3\n");
