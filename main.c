@@ -932,7 +932,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
 static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    int peer_id = fd_i - POLL_PSOCKS_OFF;
+    unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     char *pktbuf = state->peers[peer_id].ibuf.buf;
     int sock;
 
@@ -1004,7 +1004,7 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
 static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    int peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
+    unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
     char *payload = state->peers[peer_id].ibuf.buf + sizeof(PktHdr);
     CacheFileHeader *f;
@@ -1057,7 +1057,7 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
 static int process_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    int peer_id = fd_i - POLL_PSOCKS_OFF;
+    unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
 
     switch (hdr->type) {
@@ -1080,7 +1080,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     // Receive packets from read, ONE AT A TIME
-    int peer_id = fd_i - POLL_PSOCKS_OFF;
+    unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     PeerState *peer = &state->peers[peer_id];
     PktReadBuf *buf = &peer->ibuf;
     int read_len;
@@ -1307,6 +1307,17 @@ static int obuf_get_empty(WriteBuf *buf) {
     }
 }
 
+static int obuf_get_unread(WriteBuf *buf) {
+    // Subtract 1 -- byte at a-1 is always empty
+    // We need a spare byte to differentiate between empty and full
+    if (buf->r <= buf->w) {
+        return buf->r - buf->w + buf->len;
+    }
+    else {
+        return buf->r - buf->w;
+    }
+}
+
 static int obuf_get_unacked(WriteBuf *buf) {
     if (buf->a <= buf->r) {
         return buf->r - buf->a + buf->len;
@@ -1436,6 +1447,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     LogConn *lc;
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     PeerState *peer = &state->peers[peer_id];
+    bool unread_data = false;
 
     if (peer->lc_iter == NULL) {
         peer->lc_iter = dict_iter_new(lcs);
@@ -1464,6 +1476,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         int pktlen;
         // Non-SFN case: look for LC 
         if (lc->serv_id == peer_id) {
+
             // Handle pending commands
             // Command: new logical connection
             if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
@@ -1478,13 +1491,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         .off = 0,
                         .len = sizeof(LogConn)
                     };
-                    // debug
-                    //memset(fakebuf, 'H', sizeof(PktHdr));
-                    //copy_to_obuf(&peer->obuf, fakebuf, sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
-
-                    //memset(fakebuf, 'P', sizeof(LogConn));
-                    //copy_to_obuf(&peer->obuf, fakebuf, sizeof(LogConn));
                     copy_to_obuf(&peer->obuf, (char *)(lc), sizeof(LogConn));
 
                     lc->pending_cmd[peer_id] = PEND_NONE;
@@ -1496,6 +1503,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     // TODO: optimize loop for non-SFN case?
                 }
             }
+
             else if (lc->pending_data[peer_id] == PEND_DATA) {
                 char buf[PKT_MAX_PAYLOAD_LEN];
                 int nbytes, obuf_empty;
@@ -1527,9 +1535,11 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     nbytes = cachefile_get_readlen(f, peer_id);
                     if (PKT_MAX_PAYLOAD_LEN < nbytes) {
                         nbytes = PKT_MAX_PAYLOAD_LEN;
+                        unread_data = true;
                     }
                     if (obuf_empty < nbytes) {
                         nbytes = obuf_empty;
+                        unread_data = true;
                     }
                     // This should always succeed, since nbytes <= readlen
                     hdr.off = cachefile_get_readoff(f, peer_id);
@@ -1540,13 +1550,20 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     // Copy header, payload to output buffer
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, buf, nbytes);
+
+                    if (unread_data) {
+                        // re-enabled pollout
+                        lc->pending_data[peer_id] = PEND_DATA;
+                    }
+                    else {
+                        // don't disable pollout, in case another LC enabled it
+                        lc->pending_data[peer_id] = PEND_NONE;
+                    }
                 }
             }
 
-            // TODO: prioritize LCs that have new data, but also check LCs that
-            // have data available to read, and write that
-            // OR, don't clear PEND_DATA unless all data has been read
-
+            // TODO: prioritize LCs that have new data
+            
             // TODO [future work]: simple priority queue implementation idea:
             // When a LC has more data, push it forward in the cache list so it
             // gets reviewed again sooner. May need to check for loops here, or
@@ -1556,6 +1573,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // SFN case only -- sending to peer that isn't final destination
         }
 
+        // Advance LC iterator
         if (!dict_iter_hasnext(peer->lc_iter)) {
             break;
         }
@@ -1569,6 +1587,17 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
 
+    // Re-enabled POLLOUT if any data needs to be read
+    if (obuf_get_unread(&peer->obuf) > 0) {
+        unread_data = true;
+    }
+
+    // unread_data will be true if any LC has data in its caches or if the
+    // buffer writev command didn't write all bytes
+    if (unread_data) {
+        fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+    }
+
     return 0;
 }
 
@@ -1579,72 +1608,67 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     
     char buf[PKT_MAX_PAYLOAD_LEN];
     int nbytes;
-    bool found_sock;
     int obuf_empty;
-    long long read_avail;
-    
-    // Find which LCs correspond to this server sock
-    for (int i = 0; i < POLL_NUM_USSOCKS; ++i) {
-        UserServConnState *conn_state = &state->user_serv_conns[i];
-        LogConn *lc;
+    unsigned peer_id = fd_i - POLL_USSOCKS_OFF;
+    UserServConnState *conn_state = &state->user_serv_conns[peer_id];
+    LogConn *lc;
+    bool unread_data = false;
 
-        if (conn_state->sock == fds[fd_i].fd) {
-            found_sock = true;
-        }
-        else {
-            continue;
-        }
+    assert(conn_state->sock == fds[fd_i].fd);
+    assert(conn_state->sock_status == USSOCK_CONNECTED);
 
-        assert(conn_state->sock_status == USSOCK_CONNECTED);
-
-        // Get LC, so we can read the cache
-        lc = dict_get(state->log_conns, conn_state->lc_id, e);
-        if (lc == NULL) {
-            err_msg_prepend(e, "write_to_user_sock: ");
-            return -1;
-        }
-
-        // TODO: update obuf ack counter here
-        // Find how much we can write
-        nbytes = PKT_MAX_PAYLOAD_LEN;
-
-        if (obuf_update_ack(&conn_state->obuf, conn_state->sock, e) < 0) {
-            err_msg_prepend(e, "write_to_user_sock: ");
-            return -1;
-        }
-
-        obuf_empty = obuf_get_empty(&conn_state->obuf);
-        if (obuf_empty < nbytes) {
-            nbytes = obuf_empty;
-        }
-
-        read_avail = cachefile_get_readlen(lc->cache.fwd.hdr_base, lc->serv_id);
-        if (read_avail < nbytes) {
-            nbytes = read_avail;
-        }
-
-        if (nbytes == 0) {
-            printf("write_to_user_sock: nbytes == 0\n");
-            return 0;
-        }
- 
-        // Read that number of bytes
-        assert(nbytes == cachefile_read(lc->cache.fwd.hdr_base,
-            lc->serv_id, buf, nbytes, e));
-        
-        // Copy to output buffer
-        copy_to_obuf(&conn_state->obuf, buf, nbytes);
-
-        // Write as much of output buffer as possible
-        if (writev_from_obuf(&conn_state->obuf, conn_state->sock, e) < 0) {
-            return -1;
-        }
-        
-        // TODO: send ack packet (at end?)
-        break;
+    // Get LC, so we can read the cache
+    lc = dict_get(state->log_conns, conn_state->lc_id, e);
+    if (lc == NULL) {
+        err_msg_prepend(e, "write_to_user_sock: ");
+        return -1;
     }
 
-    assert(found_sock); // we received a POLLOUT, so socket must exist
+    // TODO: update obuf ack counter here
+    if (obuf_update_ack(&conn_state->obuf, conn_state->sock, e) < 0) {
+        err_msg_prepend(e, "write_to_user_sock: ");
+        return -1;
+    }
+
+    // Find how much we can write
+    nbytes = cachefile_get_readlen(lc->cache.fwd.hdr_base, lc->serv_id);
+    if (PKT_MAX_PAYLOAD_LEN < nbytes) {
+        nbytes = PKT_MAX_PAYLOAD_LEN;
+        unread_data = true;
+    }
+
+    obuf_empty = obuf_get_empty(&conn_state->obuf);
+    if (obuf_empty < nbytes) {
+        nbytes = obuf_empty;
+        unread_data = true;
+    }
+
+    if (nbytes == 0) {
+        printf("write_to_user_sock: nbytes == 0\n");
+        return 0;
+    }
+
+    // Read that number of bytes
+    assert(nbytes == cachefile_read(lc->cache.fwd.hdr_base,
+        lc->serv_id, buf, nbytes, e));
+    
+    // Copy to output buffer
+    copy_to_obuf(&conn_state->obuf, buf, nbytes);
+
+    // Write as much of output buffer as possible
+    if (writev_from_obuf(&conn_state->obuf, conn_state->sock, e) < 0) {
+        return -1;
+    }
+
+    if (obuf_get_unread(&conn_state->obuf) > 0) {
+        unread_data = true;
+    }
+
+    if (unread_data) {
+        fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+    }
+
+    // TODO: send ack packet (at end?)
 
     // 4. Verify delivery (block, should be instant)
 
