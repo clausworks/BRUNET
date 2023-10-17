@@ -1070,7 +1070,7 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
 static int receive_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
-    // Receive packets from read, one at a time
+    // Receive packets from read, ONE AT A TIME
     int peer_id = fd_i - POLL_PSOCKS_OFF;
     PeerState *peer = &state->peers[peer_id];
     PktReadBuf *buf = &peer->ibuf;
@@ -1088,8 +1088,8 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         }
         // Read payload (or remaining bytes thereof)
         else {
-            hdr = (PktHdr *)buf->buf;
-            nbytes = hdr->len - buf->w + sizeof(PktHdr);
+            hdr = (PktHdr *)(buf->buf);
+            nbytes = hdr->len - (buf->w + sizeof(PktHdr));
 
             //assert(nbytes < buf->len - buf->w);
 
@@ -1496,7 +1496,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     .lc_id = lc->id,
                     //set .dir later
                     //set .off later
-                    .len = sizeof(LogConn)
+                    //set .len later
                 };
 
                 obuf_empty = obuf_get_empty(&peer->obuf);
@@ -1514,10 +1514,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         assert(0); // Should not reach in non-SFN case
                     }
 
-                    // Copy header to output buffer
-                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
-
-                    // Read bytes into temporary buffer
+                    // Read payload into temporary buffer
                     nbytes = cachefile_get_readlen(f, peer_id);
                     if (PKT_MAX_PAYLOAD_LEN < nbytes) {
                         nbytes = PKT_MAX_PAYLOAD_LEN;
@@ -1528,6 +1525,11 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     // This should always succeed, since nbytes <= readlen
                     hdr.off = cachefile_get_readoff(f, peer_id);
                     assert(nbytes == cachefile_read(f, peer_id, buf, nbytes, e));
+
+                    hdr.len = nbytes; // payload length
+
+                    // Copy header, payload to output buffer
+                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, buf, nbytes);
                 }
             }
