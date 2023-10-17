@@ -1349,6 +1349,7 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
     assert(ack_increment <= obuf_get_unacked(buf));
 
     buf->a = (buf->a + ack_increment) % buf->len;
+    buf->last_acked += ack_increment;
 
     return 0;
 }
