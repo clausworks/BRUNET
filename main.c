@@ -1614,6 +1614,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     unsigned lc_id;
     LogConn *lc;
     bool unread_data = false;
+    CacheFileHeader *cache;
 
     // Set values based on serv/clnt
     if (fdtype == FDTYPE_USERSERV) {
@@ -1644,9 +1645,11 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     if (fdtype == FDTYPE_USERSERV) {
         this_id = lc->serv_id;
+        cache = lc->cache.fwd.hdr_base;
     }
     else {
         this_id = lc->clnt_id;
+        cache = lc->cache.bkwd.hdr_base;
     }
 
     // TODO: update obuf ack counter here
@@ -1656,7 +1659,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     }
 
     // Find how much we can write
-    nbytes = cachefile_get_readlen(lc->cache.fwd.hdr_base, this_id);
+    nbytes = cachefile_get_readlen(cache, this_id);
     if (PKT_MAX_PAYLOAD_LEN < nbytes) {
         nbytes = PKT_MAX_PAYLOAD_LEN;
         unread_data = true;
@@ -1674,7 +1677,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     }
 
     // Read that number of bytes
-    assert(nbytes == cachefile_read(lc->cache.fwd.hdr_base, this_id, buf, nbytes, e));
+    assert(nbytes == cachefile_read(cache, this_id, buf, nbytes, e));
     
     // Copy to output buffer
     copy_to_obuf(obuf, buf, nbytes);
