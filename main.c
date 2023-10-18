@@ -1349,6 +1349,7 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
     // Subtract handshake byte (only once)
     if (buf->last_acked == 0 && current_acked >= 1) {
         ack_increment -= 1;
+        buf->last_acked += 1;
     }
 
     assert(ack_increment <= obuf_get_unacked(buf));
