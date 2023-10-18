@@ -756,6 +756,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             // Key used to lookup LC in dict
             state->user_clnt_conns[i].lc_id = lc->id;
             state->user_clnt_conns[i].sock = sock;
+            reset_writebuf(&state->user_clnt_conns[i].obuf);
             fds[i + POLL_UCSOCKS_OFF].events = POLLIN | POLLRDHUP;
             return 0;
         }
@@ -989,8 +990,8 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
         if (state->user_serv_conns[i].sock < 0) {
             state->user_serv_conns[i].lc_id = lc->id;
             state->user_serv_conns[i].sock = sock;
+            reset_writebuf(&state->user_serv_conns[i].obuf);
             state->user_serv_conns[i].sock_status = USSOCK_CONNECTING;
-
             fds[i + POLL_USSOCKS_OFF].events = POLLOUT; // fd updated by update_poll_fds
             return 0;
         }
@@ -1603,40 +1604,65 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
 // TODO: write to clnt sock
 static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
-    int fd_i, ErrorStatus *e) {
+    int fd_i, FDType fdtype, ErrorStatus *e) {
     
     char buf[PKT_MAX_PAYLOAD_LEN];
     int nbytes;
     int obuf_empty;
-    unsigned peer_id = fd_i - POLL_USSOCKS_OFF;
-    UserServConnState *conn_state = &state->user_serv_conns[peer_id];
+    WriteBuf *obuf;
+    unsigned peer_id, this_id;
+    unsigned lc_id;
     LogConn *lc;
     bool unread_data = false;
 
-    assert(conn_state->sock == fds[fd_i].fd);
-    assert(conn_state->sock_status == USSOCK_CONNECTED);
+    // Set values based on serv/clnt
+    if (fdtype == FDTYPE_USERSERV) {
+        peer_id = fd_i - POLL_USSOCKS_OFF;
+        obuf = &state->user_serv_conns[peer_id].obuf;
+        lc_id = state->user_serv_conns[peer_id].lc_id;
+
+        assert(fds[fd_i].fd == fds[fd_i].fd);
+        assert(state->user_serv_conns[peer_id].sock_status == USSOCK_CONNECTED);
+    }
+    else if (fdtype == FDTYPE_USERCLNT) {
+        peer_id = fd_i - POLL_UCSOCKS_OFF;
+        obuf = &state->user_clnt_conns[peer_id].obuf;
+        lc_id = state->user_serv_conns[peer_id].lc_id;
+
+        assert(fds[fd_i].fd == fds[fd_i].fd);
+    }
+    else {
+        assert(0); // should never happen
+    }
 
     // Get LC, so we can read the cache
-    lc = dict_get(state->log_conns, conn_state->lc_id, e);
+    lc = dict_get(state->log_conns, lc_id, e);
     if (lc == NULL) {
         err_msg_prepend(e, "write_to_user_sock: ");
         return -1;
     }
 
+    if (fdtype == FDTYPE_USERSERV) {
+        this_id = lc->serv_id;
+    }
+    else {
+        this_id = lc->clnt_id;
+    }
+
     // TODO: update obuf ack counter here
-    if (obuf_update_ack(&conn_state->obuf, conn_state->sock, e) < 0) {
+    if (obuf_update_ack(obuf, fds[fd_i].fd, e) < 0) {
         err_msg_prepend(e, "write_to_user_sock: ");
         return -1;
     }
 
     // Find how much we can write
-    nbytes = cachefile_get_readlen(lc->cache.fwd.hdr_base, lc->serv_id);
+    nbytes = cachefile_get_readlen(lc->cache.fwd.hdr_base, this_id);
     if (PKT_MAX_PAYLOAD_LEN < nbytes) {
         nbytes = PKT_MAX_PAYLOAD_LEN;
         unread_data = true;
     }
 
-    obuf_empty = obuf_get_empty(&conn_state->obuf);
+    obuf_empty = obuf_get_empty(obuf);
     if (obuf_empty < nbytes) {
         nbytes = obuf_empty;
         unread_data = true;
@@ -1648,23 +1674,22 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     }
 
     // Read that number of bytes
-    assert(nbytes == cachefile_read(lc->cache.fwd.hdr_base,
-        lc->serv_id, buf, nbytes, e));
+    assert(nbytes == cachefile_read(lc->cache.fwd.hdr_base, this_id, buf, nbytes, e));
     
     // Copy to output buffer
-    copy_to_obuf(&conn_state->obuf, buf, nbytes);
+    copy_to_obuf(obuf, buf, nbytes);
 
     // Write as much of output buffer as possible
-    if (writev_from_obuf(&conn_state->obuf, conn_state->sock, e) < 0) {
+    if (writev_from_obuf(obuf, fds[fd_i].fd, e) < 0) {
         return -1;
     }
 
-    if (obuf_get_unread(&conn_state->obuf) > 0) {
+    if (obuf_get_unread(obuf) > 0) {
         unread_data = true;
     }
 
     if (unread_data) {
-        fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+        fds[fd_i].events |= POLLOUT;
     }
 
     // TODO: send ack packet (at end?)
@@ -1673,6 +1698,9 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     // TODO: make sure we never send duplicate bytes
     // (Can just verify that we never save duplicate bytes to cache)
+    //
+    // TODO: listen sock: decide peer connect race condition based on lowest
+    // lc_id
 
     return 0;
 }
@@ -1694,7 +1722,7 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
     case USSOCK_CONNECTED: // already connected, data to write
         printf("handle_pollout_userserv: USSOCK_CONNECTED\n");
         // TODO: read from cache and write to server socket
-        if (write_to_user_sock(state, fds, fd_i, e) < 0) {
+        if (write_to_user_sock(state, fds, fd_i, FDTYPE_USERSERV, e) < 0) {
             return -1;
         }
         break;

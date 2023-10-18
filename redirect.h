@@ -153,6 +153,7 @@ typedef struct {
 typedef struct {
     int sock;
     unsigned lc_id;
+    WriteBuf obuf;
 } UserClntConnState;
 
 typedef struct {
