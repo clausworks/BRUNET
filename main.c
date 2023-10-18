@@ -1475,7 +1475,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         lc = (LogConn *)dict_iter_read(peer->lc_iter);
         int pktlen;
         // Non-SFN case: look for LC 
-        if (lc->serv_id == peer_id) {
+        if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
 
             // Handle pending commands
             // Command: new logical connection
