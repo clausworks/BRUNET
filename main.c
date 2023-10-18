@@ -90,6 +90,36 @@ static void print_sock_info(int s) {
     }
 }
 
+static bool has_so_error(int sock, ErrorStatus *e) {
+    int so_error;
+    socklen_t so_len = sizeof(int);
+
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR,
+        &so_error, &so_len) < 0) {
+        err_msg_errno(e, "getsockopt: POLLOUT");
+        return true;
+    }
+    if (so_error) {
+        // TODO: interpret so_error (same as errno?)
+        err_msg(e, "SO_ERROR on user socket on POLLOUT\n");
+        return true;
+    }
+
+    return false;
+}
+
+static int set_so_nodelay(int sock, ErrorStatus *e) {
+    int one = 1;
+    int status;
+
+    status = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    if (status < 0) {
+        err_msg_errno(e, "set_so_nodelay");
+        return -1;
+    }
+    return 0;
+}
+
 /* Create a socket and start listening on it. Socket will be non-blocking.
  */
 int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
@@ -177,6 +207,11 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
             err_msg_errno(e, "attempt_connect: connect (nonblocking)");
             return -1;
         }
+    }
+
+    if (set_so_nodelay(sock, e) < 0) {
+        err_msg_prepend(e, "attempt_connect: ");
+        return -1;
     }
 
     return sock;
@@ -472,36 +507,6 @@ static int init_connectivity_state(ConnectivityState *state,
         return -1;
     }
 
-    return 0;
-}
-
-static bool has_so_error(int sock, ErrorStatus *e) {
-    int so_error;
-    socklen_t so_len = sizeof(int);
-
-    if (getsockopt(sock, SOL_SOCKET, SO_ERROR,
-        &so_error, &so_len) < 0) {
-        err_msg_errno(e, "getsockopt: POLLOUT");
-        return true;
-    }
-    if (so_error) {
-        // TODO: interpret so_error (same as errno?)
-        err_msg(e, "SO_ERROR on user socket on POLLOUT\n");
-        return true;
-    }
-
-    return false;
-}
-
-static int set_so_nodelay(int sock, ErrorStatus *e) {
-    int one = 1;
-    int status;
-
-    status = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-    if (status < 0) {
-        err_msg_errno(e, "set_so_nodelay");
-        return -1;
-    }
     return 0;
 }
 
