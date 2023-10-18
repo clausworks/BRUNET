@@ -1044,7 +1044,7 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
         for (int dst = 0; dst < POLL_NUM_UCSOCKS; ++dst) {
             if (state->user_clnt_conns[dst].lc_id == lc->id) {
                 if (state->user_clnt_conns[dst].sock >= 0) {
-                    fds[dst + POLL_USSOCKS_OFF].events |= POLLOUT;
+                    fds[dst + POLL_UCSOCKS_OFF].events |= POLLOUT;
                     found_user_conn = true;
                     break;
                 }
