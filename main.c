@@ -1789,7 +1789,7 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
         // TODO: write data from LC
         // handle_pollout_userclnt
         // write data to user
-        printf("nothing implemented yet...\n");
+        return write_to_user_sock(state, fds, fd_i, FDTYPE_USERCLNT, e);
         break;
     case FDTYPE_USERSERV:
         // a) Nonblocking connection attempt succeeded
