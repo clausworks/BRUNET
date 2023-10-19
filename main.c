@@ -1672,7 +1672,6 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     LogConn *lc;
     bool unread_data = false;
     CacheFileHeader *cache;
-    int n_acked;
 
     // Set values based on serv/clnt
     if (fdtype == FDTYPE_USERSERV) {
@@ -1701,8 +1700,8 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
 
-    // Update acknowledgements
-    if ((n_acked = obuf_update_ack(obuf, fds[fd_i].fd, e)) < 0) {
+    // Update buffer acknowledgement
+    if (obuf_update_ack(obuf, fds[fd_i].fd, e) < 0) {
         err_msg_prepend(e, "write_to_user_sock: ");
         return -1;
     }
@@ -1710,22 +1709,16 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     if (fdtype == FDTYPE_USERSERV) {
         this_id = lc->serv_id;
         cache = lc->cache.fwd.hdr_base;
-        if (n_acked > 0) {
-            lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
-            fds[lc->clnt_id + POLL_UCSOCKS_OFF].events |= POLLOUT;
-        }
+        // Schedule ack packet
+        lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
+        fds[lc->clnt_id + POLL_UCSOCKS_OFF].events |= POLLOUT;
     }
     else {
         this_id = lc->clnt_id;
         cache = lc->cache.bkwd.hdr_base;
-        if (n_acked > 0) {
-            lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
-            fds[lc->serv_id + POLL_USSOCKS_OFF].events |= POLLOUT;
-        }
-    }
-
-    if (n_acked > 0) {
-        cachefile_ack(cache, n_acked);
+        // Schedule ack packet
+        lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
+        fds[lc->serv_id + POLL_USSOCKS_OFF].events |= POLLOUT;
     }
 
     // Find how much we can write
@@ -1752,6 +1745,14 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     // Copy to output buffer
     copy_to_obuf(obuf, buf, nbytes);
 
+    // Send ack
+    // Note: this technically only verifies that the data reached this proxy
+    // program and will certainly be written to the destination socket. Since TCP guarantees
+    // delivery, the only way data will not eventually be delivered is if the
+    // user program itself closes the connection before it has a chance to
+    // receive all the data. This is not our problem.
+    cachefile_ack(cache, nbytes);
+
     // Write as much of output buffer as possible
     if (writev_from_obuf(obuf, fds[fd_i].fd, e) < 0) {
         return -1;
@@ -1764,10 +1765,6 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     if (unread_data) {
         fds[fd_i].events |= POLLOUT;
     }
-
-    // TODO: send ack packet (at end?)
-
-    // 4. Verify delivery (block, should be instant)
 
     // TODO: make sure we never send duplicate bytes
     // (Can just verify that we never save duplicate bytes to cache?)
