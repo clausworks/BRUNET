@@ -37,11 +37,12 @@ typedef enum {
 typedef enum {
     PEND_NONE = 0,
     PEND_LC_NEW = 1,
+    PEND_LC_ACK = 2
 } PendingCmd;
 
 typedef enum {
     PEND_NODATA = 0,
-    PEND_DATA = 1,
+    PEND_DATA = 1
 } PendingData;
 
 typedef enum {
@@ -51,7 +52,8 @@ typedef enum {
 
 typedef enum {
     PKTTYPE_DATA = 0,
-    PKTTYPE_LC_NEW = 1
+    PKTTYPE_LC_NEW = 1,
+    PKTTYPE_LC_ACK = 2
 } PktType;
 
 
@@ -142,8 +144,6 @@ typedef struct {
     struct in_addr addr;
     int sock;
     PeerSockStatus sock_status; // true if sock represents a timer fd
-    unsigned long long total_sent;
-    unsigned long long total_acked;
     dictiter_t lc_iter;
     WriteBuf obuf;
     PktReadBuf ibuf;

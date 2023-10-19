@@ -1350,10 +1350,7 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
         return -1;
     }
 
-    /*if (current_acked == 0) {
-        err_msg(e, "bytes_acked: handshake not completed (acked = 0)");
-        return -1;
-    }*/
+    // TODO: on connection reset, set buf->last_acked to 0
 
     ack_increment = current_acked - buf->last_acked;
     
@@ -1487,11 +1484,12 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         int pktlen;
         // Non-SFN case: look for LC 
         if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
-
-            // Handle pending commands
-            // Command: new logical connection
+            
+            // PACKET: LC_NEW
             if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
                 // Copy to output buf only if there's enough space
+                // TODO: don't transfer whole LC, just the info that we process
+                // on the other end. This is wasteful.
                 pktlen = sizeof(PktHdr) + sizeof(LogConn);
                 if (obuf_get_empty(&peer->obuf) > pktlen) {
                     //char fakebuf[1024];
@@ -1515,20 +1513,68 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 }
             }
 
-            else if (lc->pending_data[peer_id] == PEND_DATA) {
+            // PACKET: LC_ACK
+            if (lc->pending_cmd[peer_id] == PEND_LC_ACK) {
+                pktlen = sizeof(PktHdr);
+
+                if (obuf_get_empty(&peer->obuf) > pktlen) {
+                    CacheFileHeader *f;
+                    PktHdr hdr = {
+                        .type = PKTTYPE_LC_ACK,
+                        .lc_id = lc->id,
+                        // set .dir later TODO
+                        // set .off later
+                        .len = 0
+                    };
+
+                    // Note on direction: if the other device (peer_id) is the
+                    // LC server, then the packet travels forward (to the
+                    // server) and we use PKTDIR_FWD (and v.v.). The offset of
+                    // the packet, however, is an ACK value for the stream/cache
+                    // in the opposite direction.
+                    if (lc->serv_id == peer_id) {
+                        // Packet goes forward (to server)
+                        hdr.dir = PKTDIR_FWD;
+                        // ACK bytes from bkwd stream
+                        f = lc->cache.bkwd.hdr_base;
+                    }
+                    else if (lc->clnt_id == peer_id) {
+                        // Packet goes backward (to client)
+                        hdr.dir = PKTDIR_BKWD;
+                        // ACK bytes from fwd stream
+                        f = lc->cache.fwd.hdr_base;
+                    }
+                    else {
+                        assert(0); // Should not reach in non-SFN case
+                    }
+
+                    hdr.off = cachefile_get_ack(f);
+                    // TODO: update ack when obuf ack for user sock updates
+
+                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+
+                    lc->pending_cmd[peer_id] = PEND_NONE;
+                }
+            }
+
+            // PACKET: DATA PACKET
+            if (lc->pending_data[peer_id] == PEND_DATA) {
                 char buf[PKT_MAX_PAYLOAD_LEN];
                 int nbytes, obuf_empty;
                 CacheFileHeader *f;
-                PktHdr hdr = {
-                    .type = PKTTYPE_DATA,
-                    .lc_id = lc->id,
-                    //set .dir later
-                    //set .off later
-                    //set .len later
-                };
+                
+                pktlen = sizeof(PktHdr) + 1; // minimum packet size
 
                 obuf_empty = obuf_get_empty(&peer->obuf);
-                if (obuf_empty > sizeof(PktHdr) + 1) {
+                if (obuf_empty > pktlen) {
+                    PktHdr hdr = {
+                        .type = PKTTYPE_DATA,
+                        .lc_id = lc->id,
+                        //set .dir later
+                        //set .off later
+                        //set .len later
+                    };
+
                     // Determine direction (peer_id is destination)
                     if (lc->serv_id == peer_id) {
                         hdr.dir = PKTDIR_FWD;
@@ -1553,7 +1599,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         unread_data = true;
                     }
                     // This should always succeed, since nbytes <= readlen
-                    hdr.off = cachefile_get_readoff(f, peer_id);
+                    hdr.off = cachefile_get_read(f, peer_id);
                     assert(nbytes == cachefile_read(f, peer_id, buf, nbytes, e));
 
                     hdr.len = nbytes; // payload length
@@ -1626,6 +1672,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     LogConn *lc;
     bool unread_data = false;
     CacheFileHeader *cache;
+    int n_acked;
 
     // Set values based on serv/clnt
     if (fdtype == FDTYPE_USERSERV) {
@@ -1654,20 +1701,26 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
 
+    // Update acknowledgements
+    if ((n_acked = obuf_update_ack(obuf, fds[fd_i].fd, e)) < 0) {
+        err_msg_prepend(e, "write_to_user_sock: ");
+        return -1;
+    }
+
     if (fdtype == FDTYPE_USERSERV) {
         this_id = lc->serv_id;
+        lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
+        fds[lc->clnt_id + POLL_UCSOCKS_OFF].events |= POLLOUT;
         cache = lc->cache.fwd.hdr_base;
     }
     else {
         this_id = lc->clnt_id;
+        lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
+        fds[lc->serv_id + POLL_USSOCKS_OFF].events |= POLLOUT;
         cache = lc->cache.bkwd.hdr_base;
     }
 
-    // TODO: update obuf ack counter here
-    if (obuf_update_ack(obuf, fds[fd_i].fd, e) < 0) {
-        err_msg_prepend(e, "write_to_user_sock: ");
-        return -1;
-    }
+    cachefile_ack(cache, n_acked);
 
     // Find how much we can write
     nbytes = cachefile_get_readlen(cache, this_id);
@@ -1711,7 +1764,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     // 4. Verify delivery (block, should be instant)
 
     // TODO: make sure we never send duplicate bytes
-    // (Can just verify that we never save duplicate bytes to cache)
+    // (Can just verify that we never save duplicate bytes to cache?)
     //
     // TODO: listen sock: decide peer connect race condition based on lowest
     // lc_id

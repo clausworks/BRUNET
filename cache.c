@@ -430,6 +430,8 @@ void cachefile_ack(CacheFileHeader *f, long long n_acked) {
     // Update logical value
     f->logical_ack += n_acked;
 
+    printf("cachefile_ack: %lld bytes\n", n_acked);
+
     // Update read heads
     for (int p = 0; p < f->n_peers; ++p) {
         if (f->logical_read[p] < f->logical_ack) {
@@ -446,13 +448,16 @@ unsigned long long cachefile_get_readlen(CacheFileHeader *f, int peer_id) {
     return f->logical_write - f->logical_read[peer_id];
 }
 
-unsigned long long cachefile_get_readoff(CacheFileHeader *f, int peer_id) {
-    // TODO: MAKE LOGICAL
-    return f->read[peer_id];
+unsigned long long cachefile_get_read(CacheFileHeader *f, int peer_id) {
+    return f->logical_read[peer_id];
 }
 
 unsigned long long cachefile_get_ack(CacheFileHeader *f) {
     return f->logical_ack;
+}
+
+unsigned long long cachefile_get_write(CacheFileHeader *f) {
+    return f->logical_write;
 }
 
 /******************************************************************************
@@ -511,7 +516,7 @@ static int _create_file(char *fname, ErrorStatus *e) {
 
 /* Populate a Cache object for the provided logical connection.
  */
-int cache_init(Cache *cache, unsigned lc_id, /*struct in_addr peers[], */int n_peers, ErrorStatus *e) {
+int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
     // Create a new cache files for a connection (fwd, bkwd)
     char fname[CACHE_FNAME_SIZE];
     CacheFileHeader *f;

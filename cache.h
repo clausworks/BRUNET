@@ -48,8 +48,11 @@ int cache_init(Cache *, unsigned, int, ErrorStatus *);
 int cache_close(Cache *, ErrorStatus *e);
 int cachefile_read(CacheFileHeader *f, int, char *, int, ErrorStatus *);
 int cachefile_write(CacheFileHeader *f, char *, int, ErrorStatus *);
+void cachefile_ack(CacheFileHeader *f, long long);
 unsigned long long cachefile_get_readlen(CacheFileHeader *f, int);
-unsigned long long cachefile_get_readoff(CacheFileHeader *f, int);
+unsigned long long cachefile_get_read(CacheFileHeader *f, int);
+unsigned long long cachefile_get_ack(CacheFileHeader *f);
+unsigned long long cachefile_get_write(CacheFileHeader *f);
 
 #ifdef __TEST
 void __test_caching(void);
