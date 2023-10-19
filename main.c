@@ -275,6 +275,28 @@ int bytes_acked(int sock, long long unsigned int *nbytes, ErrorStatus *e) {
     return 0;
 }
 
+/* Take the list of Logical Connections and build a corresponding pollfd array
+ * from it. Only LogConns with sock>=0 are considered (therefore, the LogConn
+ * list may include nonactive/nonexistent LogConns). This function overwrites
+ * the entire old user_fds array.
+ *
+ * Returns: number of (nonnegative) file descriptors added to user_fds.
+ */
+
+/* Take the list of all peers in the system and build a pollfd array from the
+ * peers which are currently connected (i.e. have sock=>0). This function
+ * overwrites the entire old peer_fds array.
+ *
+ * Returns: number of (nonnegative) file descriptors added to peer_fds.
+ */
+int _peer_compare_addr(const void *a, const void *b) {
+    PeerState *pa = (PeerState *)a;
+    PeerState *pb = (PeerState *)b;
+
+    return ((int)pa->addr.s_addr - (int)pb->addr.s_addr);
+}
+
+
 
 /******************************************************************************
  * LOGICAL CONNECTION DICTIONARY FUNCTIONS
@@ -289,6 +311,214 @@ void lc_set_id(LogConn *lc, unsigned inst, unsigned clnt_id) {
     lc->id = lc->id << (LC_ID_INSTBITS);
     lc->id |= inst;
 }
+
+void lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) {
+    LogConn *lc;
+    lc = dict_pop(state->log_conns, lc);
+    cache_close(lc->cache);
+    free(lc);
+}
+
+
+/******************************************************************************
+ * READ/WRITE BUFFER FUNCTIONS 
+ */
+
+static void reset_pktreadbuf(PktReadBuf *rbuf) {
+    memset(rbuf, 0, sizeof(PktReadBuf));
+    rbuf->len = PEER_BUF_LEN;
+}
+
+static void obuf_reset(WriteBuf *wbuf) {
+    memset(wbuf, 0, sizeof(WriteBuf));
+    wbuf->len = PEER_BUF_LEN;
+    wbuf->last_acked = 0;
+}
+
+static int obuf_get_empty(WriteBuf *buf) {
+    // Subtract 1 -- byte at a-1 is always empty
+    // We need a spare byte to differentiate between empty and full
+    if (buf->a <= buf->w) {
+        return buf->a - buf->w + buf->len - 1;
+    }
+    else {
+        return buf->a - buf->w - 1;
+    }
+}
+
+static int obuf_get_unread(WriteBuf *buf) {
+    if (buf->r <= buf->w) {
+        return buf->w - buf->r;
+    }
+    else {
+        return buf->w - buf->r + buf->len;
+    }
+}
+
+static int obuf_get_unacked(WriteBuf *buf) {
+    if (buf->r >= buf->a) {
+        return buf->r - buf->a;
+    }
+    else {
+        return buf->r - buf->a + buf->len;
+    }
+}
+
+/* Calculates the number of bytes acknowledged by TCP on the given socket and
+ * updates the buffer's internal ack pointer accordingly. This frees up space in
+ * the buffer for additional writes.
+ *
+ * Returns number of new bytes acked as a 32-bit integer, or -1 on failure.
+ *
+ * Note that this function should not be used to update a logical connection's
+ * ack status unless the associated output buffer delivers raw bytes to the
+ * stream's destination.
+ */
+static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
+    long long unsigned current_acked;
+    long long unsigned ack_increment;
+
+    if (bytes_acked(sock, &current_acked, e) < 0) {
+        err_msg_prepend(e, "obuf_update_ack: ");
+        return -1;
+    }
+
+    // TODO: on connection reset, set buf->last_acked to 0
+
+    ack_increment = current_acked - buf->last_acked;
+    
+    // Subtract handshake byte (only once)
+    if (buf->last_acked == 0 && current_acked >= 1) {
+        ack_increment -= 1;
+        buf->last_acked += 1;
+    }
+
+    // Ensures ack_increment can fit in an int32_t value
+    assert(ack_increment <= obuf_get_unacked(buf));
+
+    buf->a = (buf->a + ack_increment) % buf->len;
+    buf->last_acked += ack_increment;
+
+    return (int)(ack_increment);
+}
+
+
+/* Write from circular buffer buf. Assumes buf has already set the vectors
+ * (struct iovec) pointing into the circular buffer for writev(2) to use.
+ *
+ * Returns number of bytes written, 0 on EAGAIN/EWOULDBLOCK, -1 on error.
+ */
+static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
+    int n_seqs, n_written;
+    // We're always writing from the read head to the write head
+    // Two byte sequences: w < r
+    if (buf->w < buf->r) {
+        n_seqs = 2;
+        // Read head to end of buf
+        buf->vecbuf[0].iov_base = buf->buf + buf->r;
+        buf->vecbuf[0].iov_len = buf->len - buf->r;
+        //hex_dump("vecbuf 0", buf->vecbuf[0].iov_base, buf->vecbuf[0].iov_len, 16);
+        // Beginning to write head (end of seq)
+        buf->vecbuf[1].iov_base = buf;
+        buf->vecbuf[1].iov_len = buf->w;
+        //hex_dump("vecbuf 1", buf->vecbuf[1].iov_base, buf->vecbuf[1].iov_len, 16);
+    }
+    // One byte sequence: w > r
+    else if (buf->w > buf->r) {
+        n_seqs = 1;
+        // Read head to write head
+        buf->vecbuf[0].iov_len = buf->w - buf->r;
+        buf->vecbuf[0].iov_base = buf->buf + buf->r;
+        //hex_dump("vecbuf -", buf->vecbuf[0].iov_base, buf->vecbuf[0].iov_len, 16);
+    }
+    // No bytes to write
+    else {
+        //n_seqs = 0;
+        printf("No bytes to write to peer\n");
+        return 0;
+    }
+
+    // Perform write
+    n_written = writev(sock, buf->vecbuf, n_seqs);
+    printf("write to peer: %d bytes\n", n_written);
+    //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
+    if (n_written == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            n_written = 0;
+        }
+        else {
+            err_msg_errno(e, "obuf_perform_write: writev");
+            return -1;
+        }
+    }
+
+    // Update read head based on how many bytes were successfully written
+    buf->r = (buf->r + n_written) % buf->len;
+
+    return n_written;
+}
+
+static void copy_to_obuf(WriteBuf *buf, char *new, int len) {
+    int empty = obuf_get_empty(buf);
+    int nbytes;
+
+    assert(empty != 0);
+    assert(len <= empty);
+
+    // Two empty sequences: a <= w
+    // In a=w case, buffer is empty.
+    if (buf->a <= buf->w) {
+        // Write head to end of buf
+        nbytes = (len < buf->len - buf->w) ? len : buf->len - buf->w;
+        memcpy(buf->buf + buf->w, new, nbytes);
+        // If necessary, perform second write
+        // Beginning of buf to ack head
+        if (nbytes < len) {
+            memcpy(buf->buf, new + nbytes, len - nbytes);
+        }
+    }
+    // One empty sequence: a > w
+    else { // if (buf->a > buf->w)
+        memcpy(buf->buf + buf->w, new, len);
+    }
+
+    buf->w = (buf->w + len) % buf->len;
+    assert(buf->w != buf->a);
+
+    hex_dump("copy_to_obuf", new, len, 16);
+}
+
+
+
+static void add_peer(ConnectivityState *state, int *p,
+    struct in_addr addr, struct in_addr this_dev) {
+
+    bool found = false;
+    for (int j = 0; j < *p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
+        if (addr.s_addr == state->peers[j].addr.s_addr) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        // Initialize PeerState object
+        state->peers[*p].addr = addr;
+        state->peers[*p].sock = -1; 
+        if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
+            state->peers[*p].sock_status = PSOCK_THIS_DEVICE;
+        }
+        else {
+            state->peers[*p].sock_status = PSOCK_INVALID;
+        }
+        obuf_reset(&state->peers[*p].obuf);
+        reset_pktreadbuf(&state->peers[*p].ibuf);
+
+
+        printf("Added peer %s\n", inet_ntoa(addr));
+        *p += 1;
+    }
+}
+
 
 
 /******************************************************************************
@@ -385,67 +615,6 @@ static int connect_to_peers(ConnectivityState *state, struct pollfd fds[], Error
     return 0;
 }
 
-/* Take the list of Logical Connections and build a corresponding pollfd array
- * from it. Only LogConns with sock>=0 are considered (therefore, the LogConn
- * list may include nonactive/nonexistent LogConns). This function overwrites
- * the entire old user_fds array.
- *
- * Returns: number of (nonnegative) file descriptors added to user_fds.
- */
-
-/* Take the list of all peers in the system and build a pollfd array from the
- * peers which are currently connected (i.e. have sock=>0). This function
- * overwrites the entire old peer_fds array.
- *
- * Returns: number of (nonnegative) file descriptors added to peer_fds.
- */
-int _peer_compare_addr(const void *a, const void *b) {
-    PeerState *pa = (PeerState *)a;
-    PeerState *pb = (PeerState *)b;
-
-    return ((int)pa->addr.s_addr - (int)pb->addr.s_addr);
-}
-
-static void reset_pktreadbuf(PktReadBuf *rbuf) {
-    memset(rbuf, 0, sizeof(PktReadBuf));
-    rbuf->len = PEER_BUF_LEN;
-}
-
-static void reset_writebuf(WriteBuf *wbuf) {
-    memset(wbuf, 0, sizeof(WriteBuf));
-    wbuf->len = PEER_BUF_LEN;
-    wbuf->last_acked = 0;
-}
-
-static void add_peer(ConnectivityState *state, int *p,
-    struct in_addr addr, struct in_addr this_dev) {
-
-    bool found = false;
-    for (int j = 0; j < *p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
-        if (addr.s_addr == state->peers[j].addr.s_addr) {
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        // Initialize PeerState object
-        state->peers[*p].addr = addr;
-        state->peers[*p].sock = -1; 
-        if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
-            state->peers[*p].sock_status = PSOCK_THIS_DEVICE;
-        }
-        else {
-            state->peers[*p].sock_status = PSOCK_INVALID;
-        }
-        reset_writebuf(&state->peers[*p].obuf);
-        reset_pktreadbuf(&state->peers[*p].ibuf);
-
-
-        printf("Added peer %s\n", inet_ntoa(addr));
-        *p += 1;
-    }
-}
-
 static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
     struct in_addr c; // current client addr
     struct in_addr s; // current server addr
@@ -499,7 +668,7 @@ static int init_connectivity_state(ConnectivityState *state,
     for (int i = 0; i < POLL_NUM_USSOCKS; ++i) {
         state->user_serv_conns[i].sock = -1;
         state->user_serv_conns[i].sock_status = USSOCK_INVALID;
-        reset_writebuf(&state->user_serv_conns[i].obuf);
+        obuf_reset(&state->user_serv_conns[i].obuf);
     }
 
     state->log_conns = dict_create(e);
@@ -574,6 +743,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
 
     int i; // relative index into approprate state->* array
     int s;
+    LogConn *lc;
 
     // Close socket
     close(fds[fd_i].fd);
@@ -591,12 +761,34 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERCLNT:
         i = fd_i - POLL_UCSOCKS_OFF;
         state->user_clnt_conns[i].sock = -1;
-        // TODO: close LC
+
+        lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id);
+        if (lc == NULL) {
+            err_msg_prepend(e, "handle_disconnect: ");
+            return -1;
+        }
+        // Note on pending command: This will overwrite the previous command. It
+        // is not possible for the previous command to be PEND_LC_NEW because
+        // that is cleared as soon as the packet is generated. If the previous
+        // command is PEND_LC_ACK, then it ought to be overwritten. There is no
+        // point in ACKing when that stream is about to be closed and nothing
+        // new will be delivered. 
+        lc->pending_cmd[lc->serv_id] = PEND_LC_WILLCLOSE;
+        // TODO [future work]: apply pending command to all peers
+        fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
     case FDTYPE_USERSERV:
         i = fd_i - POLL_USSOCKS_OFF;
         state->user_serv_conns[i].sock = -1;
-        // TODO: close LC
+        state->user_serv_conns[i].sock_status = USSOCK_INVALID;
+        lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id);
+        if (lc == NULL) {
+            err_msg_prepend(e, "handle_disconnect: ");
+            return -1;
+        }
+        lc->pending_cmd[lc->clnt_id] = PEND_LC_WILLCLOSE;
+        // TODO [future work]: apply pending command to all peers
+        fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
     case FDTYPE_PEER:
         // Instead of setting sock as invalid, set timer for reconnect
@@ -756,7 +948,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             // Key used to lookup LC in dict
             state->user_clnt_conns[i].lc_id = lc->id;
             state->user_clnt_conns[i].sock = sock;
-            reset_writebuf(&state->user_clnt_conns[i].obuf);
+            obuf_reset(&state->user_clnt_conns[i].obuf);
             fds[i + POLL_UCSOCKS_OFF].events = POLLIN | POLLRDHUP;
             return 0;
         }
@@ -990,7 +1182,7 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
         if (state->user_serv_conns[i].sock < 0) {
             state->user_serv_conns[i].lc_id = lc->id;
             state->user_serv_conns[i].sock = sock;
-            reset_writebuf(&state->user_serv_conns[i].obuf);
+            obuf_reset(&state->user_serv_conns[i].obuf);
             state->user_serv_conns[i].sock_status = USSOCK_CONNECTING;
             fds[i + POLL_USSOCKS_OFF].events = POLLOUT; // fd updated by update_poll_fds
             return 0;
@@ -1345,159 +1537,6 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-static int obuf_get_empty(WriteBuf *buf) {
-    // Subtract 1 -- byte at a-1 is always empty
-    // We need a spare byte to differentiate between empty and full
-    if (buf->a <= buf->w) {
-        return buf->a - buf->w + buf->len - 1;
-    }
-    else {
-        return buf->a - buf->w - 1;
-    }
-}
-
-static int obuf_get_unread(WriteBuf *buf) {
-    if (buf->r <= buf->w) {
-        return buf->w - buf->r;
-    }
-    else {
-        return buf->w - buf->r + buf->len;
-    }
-}
-
-static int obuf_get_unacked(WriteBuf *buf) {
-    if (buf->r >= buf->a) {
-        return buf->r - buf->a;
-    }
-    else {
-        return buf->r - buf->a + buf->len;
-    }
-}
-
-/* Calculates the number of bytes acknowledged by TCP on the given socket and
- * updates the buffer's internal ack pointer accordingly. This frees up space in
- * the buffer for additional writes.
- *
- * Returns number of new bytes acked as a 32-bit integer, or -1 on failure.
- *
- * Note that this function should not be used to update a logical connection's
- * ack status unless the associated output buffer delivers raw bytes to the
- * stream's destination.
- */
-static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
-    long long unsigned current_acked;
-    long long unsigned ack_increment;
-
-    if (bytes_acked(sock, &current_acked, e) < 0) {
-        err_msg_prepend(e, "obuf_update_ack: ");
-        return -1;
-    }
-
-    // TODO: on connection reset, set buf->last_acked to 0
-
-    ack_increment = current_acked - buf->last_acked;
-    
-    // Subtract handshake byte (only once)
-    if (buf->last_acked == 0 && current_acked >= 1) {
-        ack_increment -= 1;
-        buf->last_acked += 1;
-    }
-
-    // Ensures ack_increment can fit in an int32_t value
-    assert(ack_increment <= obuf_get_unacked(buf));
-
-    buf->a = (buf->a + ack_increment) % buf->len;
-    buf->last_acked += ack_increment;
-
-    return (int)(ack_increment);
-}
-
-
-/* Write from circular buffer buf. Assumes buf has already set the vectors
- * (struct iovec) pointing into the circular buffer for writev(2) to use.
- *
- * Returns number of bytes written, 0 on EAGAIN/EWOULDBLOCK, -1 on error.
- */
-static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
-    int n_seqs, n_written;
-    // We're always writing from the read head to the write head
-    // Two byte sequences: w < r
-    if (buf->w < buf->r) {
-        n_seqs = 2;
-        // Read head to end of buf
-        buf->vecbuf[0].iov_base = buf->buf + buf->r;
-        buf->vecbuf[0].iov_len = buf->len - buf->r;
-        //hex_dump("vecbuf 0", buf->vecbuf[0].iov_base, buf->vecbuf[0].iov_len, 16);
-        // Beginning to write head (end of seq)
-        buf->vecbuf[1].iov_base = buf;
-        buf->vecbuf[1].iov_len = buf->w;
-        //hex_dump("vecbuf 1", buf->vecbuf[1].iov_base, buf->vecbuf[1].iov_len, 16);
-    }
-    // One byte sequence: w > r
-    else if (buf->w > buf->r) {
-        n_seqs = 1;
-        // Read head to write head
-        buf->vecbuf[0].iov_len = buf->w - buf->r;
-        buf->vecbuf[0].iov_base = buf->buf + buf->r;
-        //hex_dump("vecbuf -", buf->vecbuf[0].iov_base, buf->vecbuf[0].iov_len, 16);
-    }
-    // No bytes to write
-    else {
-        //n_seqs = 0;
-        printf("No bytes to write to peer\n");
-        return 0;
-    }
-
-    // Perform write
-    n_written = writev(sock, buf->vecbuf, n_seqs);
-    printf("write to peer: %d bytes\n", n_written);
-    //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
-    if (n_written == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            n_written = 0;
-        }
-        else {
-            err_msg_errno(e, "obuf_perform_write: writev");
-            return -1;
-        }
-    }
-
-    // Update read head based on how many bytes were successfully written
-    buf->r = (buf->r + n_written) % buf->len;
-
-    return n_written;
-}
-
-static void copy_to_obuf(WriteBuf *buf, char *new, int len) {
-    int empty = obuf_get_empty(buf);
-    int nbytes;
-
-    assert(empty != 0);
-    assert(len <= empty);
-
-    // Two empty sequences: a <= w
-    // In a=w case, buffer is empty.
-    if (buf->a <= buf->w) {
-        // Write head to end of buf
-        nbytes = (len < buf->len - buf->w) ? len : buf->len - buf->w;
-        memcpy(buf->buf + buf->w, new, nbytes);
-        // If necessary, perform second write
-        // Beginning of buf to ack head
-        if (nbytes < len) {
-            memcpy(buf->buf, new + nbytes, len - nbytes);
-        }
-    }
-    // One empty sequence: a > w
-    else { // if (buf->a > buf->w)
-        memcpy(buf->buf + buf->w, new, len);
-    }
-
-    buf->w = (buf->w + len) % buf->len;
-    assert(buf->w != buf->a);
-
-    hex_dump("copy_to_obuf", new, len, 16);
-}
-
 static int send_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -1556,6 +1595,52 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 }
             }
 
+            // PACKET: LC_CLOSE
+            // TODO: make sure connection isn't closed before all data is sent
+            // Turn off PEND_DATA elsewhere?
+            // note - pending data only applies to outgoing data. It should
+            // remain on until all data from the socket has been sent.
+            if (lc->pending_cmd[peer_id] == PEND_LC_CLOSE) {
+                pktlen = sizeof(PktHdr);
+
+                assert(lc->pending_data[peer_id] == PEND_NODATA);
+
+                if (obuf_get_empty(&peer->obuf) > pktlen) {
+                    CacheFileHeader *f;
+                    PktHdr hdr = {
+                        .type = PKTTYPE_LC_CLOSE,
+                        .lc_id = lc->id,
+                        // set .dir later
+                        .off = 0,
+                        .len = 0
+                    };
+
+                    // See LC_ACK for note on direction
+                    if (lc->serv_id == peer_id) {
+                        // Packet goes forward (to server)
+                        hdr.dir = PKTDIR_FWD;
+                        //f = lc->cache.bkwd.hdr_base;
+                    }
+                    else if (lc->clnt_id == peer_id) {
+                        // Packet goes backward (to client)
+                        hdr.dir = PKTDIR_BKWD;
+                        //f = lc->cache.fwd.hdr_base;
+                    }
+                    else {
+                        assert(0); // Should not reach in non-SFN case
+                    }
+
+                    //hdr.off = cachefile_get_ack(f);
+                    // TODO: update ack when obuf ack for user sock updates
+
+                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+
+                    lc->pending_cmd[peer_id] = PEND_NONE;
+                    // TODO: delete LC
+                    lc_destroy(state, lc, e);
+                }
+            }
+
             // PACKET: LC_ACK
             if (lc->pending_cmd[peer_id] == PEND_LC_ACK) {
                 pktlen = sizeof(PktHdr);
@@ -1565,7 +1650,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     PktHdr hdr = {
                         .type = PKTTYPE_LC_ACK,
                         .lc_id = lc->id,
-                        // set .dir later TODO
+                        // set .dir later
                         // set .off later
                         .len = 0
                     };
@@ -1658,6 +1743,10 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     else {
                         // don't disable pollout, in case another LC enabled it
                         lc->pending_data[peer_id] = PEND_NONE;
+                        // If we're waiting to close, now we can
+                        if (lc->pending_cmd[peer_id] == PEND_LC_WILLCLOSE) {
+                            lc->pending_cmd[peer_id] = PEND_LC_CLOSE;
+                        }
                     }
                 }
             }

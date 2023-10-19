@@ -37,7 +37,9 @@ typedef enum {
 typedef enum {
     PEND_NONE = 0,
     PEND_LC_NEW = 1,
-    PEND_LC_ACK = 2
+    PEND_LC_ACK = 2,
+    PEND_LC_WILLCLOSE = 3,
+    PEND_LC_CLOSE = 4
 } PendingCmd;
 
 typedef enum {
