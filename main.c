@@ -1566,7 +1566,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     LogConn *lc;
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     PeerState *peer = &state->peers[peer_id];
-    bool unread_data = false;
+    bool trigger_again = false;
 
     if (peer->lc_iter == NULL) {
         peer->lc_iter = dict_iter_new(lcs);
@@ -1610,12 +1610,132 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     lc->pending_cmd[peer_id] = PEND_NONE;
                 }
                 else {
+                    trigger_again = true;
                     // TODO [future work]: opportunity for ordered queue.
                     // Perhaps bump up this LC to the head of the queue so it
                     // gets considered sooner.
 
                     // TODO: optimize loop for non-SFN case?
                 }
+            }
+
+            // PACKET: LC_ACK
+            if (lc->pending_cmd[peer_id] == PEND_LC_ACK) {
+                pktlen = sizeof(PktHdr);
+
+                if (obuf_get_empty(&peer->obuf) > pktlen) {
+                    CacheFileHeader *f;
+                    PktHdr hdr = {
+                        .type = PKTTYPE_LC_ACK,
+                        .lc_id = lc->id,
+                        // set .dir later
+                        // set .off later
+                        .len = 0
+                    };
+
+                    // Note on direction: if the other device (peer_id) is the
+                    // LC server, then the packet travels forward (to the
+                    // server) and we use PKTDIR_FWD (and v.v.). The offset of
+                    // the packet, however, is an ACK value for the stream/cache
+                    // in the opposite direction.
+                    if (lc->serv_id == peer_id) {
+                        // Packet goes forward (to server)
+                        hdr.dir = PKTDIR_FWD;
+                        // ACK bytes from bkwd stream
+                        f = lc->cache.bkwd.hdr_base;
+                    }
+                    else if (lc->clnt_id == peer_id) {
+                        // Packet goes backward (to client)
+                        hdr.dir = PKTDIR_BKWD;
+                        // ACK bytes from fwd stream
+                        f = lc->cache.fwd.hdr_base;
+                    }
+                    else {
+                        assert(0); // Should not reach in non-SFN case
+                    }
+
+                    hdr.off = cachefile_get_ack(f);
+                    // TODO: update ack when obuf ack for user sock updates
+
+                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+
+                    lc->pending_cmd[peer_id] = PEND_NONE;
+                }
+                else {
+                    trigger_again = true;
+                }
+            }
+
+            // PACKET: DATA PACKET
+            if (lc->pending_data[peer_id] == PEND_DATA) {
+                char buf[PKT_MAX_PAYLOAD_LEN];
+                int nbytes, obuf_empty;
+                CacheFileHeader *f;
+
+                assert(lc->pending_cmd[peer_id] != PEND_LC_NEW);
+                
+                pktlen = sizeof(PktHdr) + 1; // minimum packet size
+
+                obuf_empty = obuf_get_empty(&peer->obuf);
+                if (obuf_empty > pktlen) {
+                    PktHdr hdr = {
+                        .type = PKTTYPE_DATA,
+                        .lc_id = lc->id,
+                        //set .dir later
+                        //set .off later
+                        //set .len later
+                    };
+
+                    // Determine direction (peer_id is destination)
+                    if (lc->serv_id == peer_id) {
+                        hdr.dir = PKTDIR_FWD;
+                        f = lc->cache.fwd.hdr_base;
+                    }
+                    else if (lc->clnt_id == peer_id) {
+                        hdr.dir = PKTDIR_BKWD;
+                        f = lc->cache.bkwd.hdr_base;
+                    }
+                    else {
+                        assert(0); // Should not reach in non-SFN case
+                    }
+
+                    // Read payload into temporary buffer
+                    nbytes = cachefile_get_readlen(f, peer_id);
+                    if (PKT_MAX_PAYLOAD_LEN < nbytes) {
+                        nbytes = PKT_MAX_PAYLOAD_LEN;
+                        trigger_again = true;
+                    }
+                    if (obuf_empty < nbytes) {
+                        nbytes = obuf_empty;
+                        trigger_again = true;
+                    }
+                    // This should always succeed, since nbytes <= readlen
+                    hdr.off = cachefile_get_read(f, peer_id);
+                    assert(nbytes == cachefile_read(f, peer_id, buf, nbytes, e));
+
+                    hdr.len = nbytes; // payload length
+
+                    // Copy header, payload to output buffer
+                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+                    copy_to_obuf(&peer->obuf, buf, nbytes);
+
+                    if (trigger_again) {
+                        // re-enabled pollout
+                        lc->pending_data[peer_id] = PEND_DATA;
+                    }
+                    else {
+                        // don't disable pollout, in case another LC enabled it
+                        lc->pending_data[peer_id] = PEND_NODATA;
+                    }
+                }
+            }
+
+            // To close, we PEND_LC_WILLCLOSE must be set for the LC, and we
+            // need to have no data pending on the output stream
+            if (lc->pending_cmd[peer_id] == PEND_LC_WILLCLOSE
+                && lc->pending_data[peer_id] == PEND_NODATA) {
+
+                lc->pending_cmd[peer_id] = PEND_LC_CLOSE;
             }
 
             // PACKET: LC_CLOSE
@@ -1663,117 +1783,11 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         return -1;
                     }
                 }
-            }
-
-            // PACKET: LC_ACK
-            if (lc->pending_cmd[peer_id] == PEND_LC_ACK) {
-                pktlen = sizeof(PktHdr);
-
-                if (obuf_get_empty(&peer->obuf) > pktlen) {
-                    CacheFileHeader *f;
-                    PktHdr hdr = {
-                        .type = PKTTYPE_LC_ACK,
-                        .lc_id = lc->id,
-                        // set .dir later
-                        // set .off later
-                        .len = 0
-                    };
-
-                    // Note on direction: if the other device (peer_id) is the
-                    // LC server, then the packet travels forward (to the
-                    // server) and we use PKTDIR_FWD (and v.v.). The offset of
-                    // the packet, however, is an ACK value for the stream/cache
-                    // in the opposite direction.
-                    if (lc->serv_id == peer_id) {
-                        // Packet goes forward (to server)
-                        hdr.dir = PKTDIR_FWD;
-                        // ACK bytes from bkwd stream
-                        f = lc->cache.bkwd.hdr_base;
-                    }
-                    else if (lc->clnt_id == peer_id) {
-                        // Packet goes backward (to client)
-                        hdr.dir = PKTDIR_BKWD;
-                        // ACK bytes from fwd stream
-                        f = lc->cache.fwd.hdr_base;
-                    }
-                    else {
-                        assert(0); // Should not reach in non-SFN case
-                    }
-
-                    hdr.off = cachefile_get_ack(f);
-                    // TODO: update ack when obuf ack for user sock updates
-
-                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
-
-                    lc->pending_cmd[peer_id] = PEND_NONE;
+                else {
+                    trigger_again = true;
                 }
             }
 
-            // PACKET: DATA PACKET
-            if (lc->pending_data[peer_id] == PEND_DATA) {
-                char buf[PKT_MAX_PAYLOAD_LEN];
-                int nbytes, obuf_empty;
-                CacheFileHeader *f;
-                
-                pktlen = sizeof(PktHdr) + 1; // minimum packet size
-
-                obuf_empty = obuf_get_empty(&peer->obuf);
-                if (obuf_empty > pktlen) {
-                    PktHdr hdr = {
-                        .type = PKTTYPE_DATA,
-                        .lc_id = lc->id,
-                        //set .dir later
-                        //set .off later
-                        //set .len later
-                    };
-
-                    // Determine direction (peer_id is destination)
-                    if (lc->serv_id == peer_id) {
-                        hdr.dir = PKTDIR_FWD;
-                        f = lc->cache.fwd.hdr_base;
-                    }
-                    else if (lc->clnt_id == peer_id) {
-                        hdr.dir = PKTDIR_BKWD;
-                        f = lc->cache.bkwd.hdr_base;
-                    }
-                    else {
-                        assert(0); // Should not reach in non-SFN case
-                    }
-
-                    // Read payload into temporary buffer
-                    nbytes = cachefile_get_readlen(f, peer_id);
-                    if (PKT_MAX_PAYLOAD_LEN < nbytes) {
-                        nbytes = PKT_MAX_PAYLOAD_LEN;
-                        unread_data = true;
-                    }
-                    if (obuf_empty < nbytes) {
-                        nbytes = obuf_empty;
-                        unread_data = true;
-                    }
-                    // This should always succeed, since nbytes <= readlen
-                    hdr.off = cachefile_get_read(f, peer_id);
-                    assert(nbytes == cachefile_read(f, peer_id, buf, nbytes, e));
-
-                    hdr.len = nbytes; // payload length
-
-                    // Copy header, payload to output buffer
-                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
-                    copy_to_obuf(&peer->obuf, buf, nbytes);
-
-                    if (unread_data) {
-                        // re-enabled pollout
-                        lc->pending_data[peer_id] = PEND_DATA;
-                    }
-                    else {
-                        // don't disable pollout, in case another LC enabled it
-                        lc->pending_data[peer_id] = PEND_NONE;
-                        // If we're waiting to close, now we can
-                        if (lc->pending_cmd[peer_id] == PEND_LC_WILLCLOSE) {
-                            lc->pending_cmd[peer_id] = PEND_LC_CLOSE;
-                        }
-                    }
-                }
-            }
 
             // TODO: prioritize LCs that have new data
             
@@ -1803,12 +1817,12 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
     // Re-enabled POLLOUT if any data needs to be read
     if (obuf_get_unread(&peer->obuf) > 0) {
-        unread_data = true;
+        trigger_again = true;
     }
 
-    // unread_data will be true if any LC has data in its caches or if the
+    // trigger_again will be true if any LC has data in its caches or if the
     // buffer writev command didn't write all bytes
-    if (unread_data) {
+    if (trigger_again) {
         fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
     }
 
