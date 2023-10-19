@@ -1709,18 +1709,24 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     if (fdtype == FDTYPE_USERSERV) {
         this_id = lc->serv_id;
-        lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
-        fds[lc->clnt_id + POLL_UCSOCKS_OFF].events |= POLLOUT;
         cache = lc->cache.fwd.hdr_base;
+        if (n_acked > 0) {
+            lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
+            fds[lc->clnt_id + POLL_UCSOCKS_OFF].events |= POLLOUT;
+        }
     }
     else {
         this_id = lc->clnt_id;
-        lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
-        fds[lc->serv_id + POLL_USSOCKS_OFF].events |= POLLOUT;
         cache = lc->cache.bkwd.hdr_base;
+        if (n_acked > 0) {
+            lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
+            fds[lc->serv_id + POLL_USSOCKS_OFF].events |= POLLOUT;
+        }
     }
 
-    cachefile_ack(cache, n_acked);
+    if (n_acked > 0) {
+        cachefile_ack(cache, n_acked);
+    }
 
     // Find how much we can write
     nbytes = cachefile_get_readlen(cache, this_id);
