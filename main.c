@@ -312,11 +312,21 @@ void lc_set_id(LogConn *lc, unsigned inst, unsigned clnt_id) {
     lc->id |= inst;
 }
 
-void lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) {
+int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) {
     LogConn *lc;
-    lc = dict_pop(state->log_conns, lc);
-    cache_close(lc->cache);
+
+    lc = dict_pop(state->log_conns, lc_id, e);
+    if (lc == NULL) {
+        err_msg_prepend(e, "lc_destroy failed: ");
+        return -1;
+    }
+    if (cache_close(&lc->cache, e) < 0) {
+        err_msg_prepend(e, "lc_destroy failed: ");
+        return -1;
+    }
     free(lc);
+
+    return 0;
 }
 
 
@@ -762,7 +772,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         i = fd_i - POLL_UCSOCKS_OFF;
         state->user_clnt_conns[i].sock = -1;
 
-        lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id);
+        lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         if (lc == NULL) {
             err_msg_prepend(e, "handle_disconnect: ");
             return -1;
@@ -781,7 +791,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         i = fd_i - POLL_USSOCKS_OFF;
         state->user_serv_conns[i].sock = -1;
         state->user_serv_conns[i].sock_status = USSOCK_INVALID;
-        lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id);
+        lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         if (lc == NULL) {
             err_msg_prepend(e, "handle_disconnect: ");
             return -1;
@@ -945,10 +955,13 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
     // Find first available slot
     for (int i = 0; i < POLL_NUM_UCSOCKS; ++i) {
         if (state->user_clnt_conns[i].sock < 0) {
-            // Key used to lookup LC in dict
+            // Create user_clnt_conns entry
             state->user_clnt_conns[i].lc_id = lc->id;
             state->user_clnt_conns[i].sock = sock;
             obuf_reset(&state->user_clnt_conns[i].obuf);
+            // Link user_clnt_conns entry from LC
+            lc->usock_idx = i; 
+            // Set fd events
             fds[i + POLL_UCSOCKS_OFF].events = POLLIN | POLLRDHUP;
             return 0;
         }
@@ -1127,21 +1140,21 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
+static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     char *pktbuf = state->peers[peer_id].ibuf.buf;
     int sock;
 
-    printf("add_lc_from_peer\n");
+    printf("process_lc_new\n");
 
     PktHdr *hdr = (PktHdr *)(pktbuf);
     LogConn *lc_buf = (LogConn *)(pktbuf + sizeof(PktHdr));
 
     LogConn *lc = malloc(sizeof(LogConn));
     if (lc == NULL) {
-        err_msg_errno(e, "add_lc_from_peer: malloc");
+        err_msg_errno(e, "process_lc_new: malloc");
         return -1;
     }
 
@@ -1155,13 +1168,13 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
     // Don't copy cache or command fields
     
     if (cache_init(&lc->cache, lc->id, state->n_peers, e) < 0) {
-        err_msg_prepend(e, "add_lc_from_peer: ");
+        err_msg_prepend(e, "process_lc_new: ");
         return -1;
     }
 
     // Add LC to dictionary
     if (dict_insert(state->log_conns, lc->id, lc, e) < 0) {
-        err_msg_prepend(e, "add_lc_from_peer: ");
+        err_msg_prepend(e, "process_lc_new: ");
         return -1;
     }
 
@@ -1180,10 +1193,14 @@ static int add_lc_from_peer(ConnectivityState *state, struct pollfd fds[],
     // Find first available slot
     for (int i = 0; i < POLL_NUM_USSOCKS; ++i) {
         if (state->user_serv_conns[i].sock < 0) {
+            // Create user_clnt_conns entry
             state->user_serv_conns[i].lc_id = lc->id;
             state->user_serv_conns[i].sock = sock;
             obuf_reset(&state->user_serv_conns[i].obuf);
             state->user_serv_conns[i].sock_status = USSOCK_CONNECTING;
+            // Link user_clnt_conns entry from LC
+            lc->usock_idx = i; 
+            // Set fd events
             fds[i + POLL_USSOCKS_OFF].events = POLLOUT; // fd updated by update_poll_fds
             return 0;
         }
@@ -1218,32 +1235,12 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     case PKTDIR_FWD:
         assert(lc->clnt_id == peer_id); // non-SFN
         f = lc->cache.fwd.hdr_base;
-        // TODO: speed this up by sorting list and doing a bsearch?
-        // Or add entry to LC (local sock)
-        // Note: we still need to ahve user_serv_conns to sync w/ fds
-        for (int dst = 0; dst < POLL_NUM_USSOCKS; ++dst) {
-            if (state->user_serv_conns[dst].lc_id == lc->id) {
-                if (state->user_serv_conns[dst].sock >= 0) {
-                    fds[dst + POLL_USSOCKS_OFF].events |= POLLOUT;
-                    found_user_conn = true;
-                    break;
-                }
-            }
-        }
+        fds[lc->usock_idx + POLL_USSOCKS_OFF].events |= POLLOUT;
         break;
     case PKTDIR_BKWD:
         assert(lc->serv_id == peer_id); // non-SFN
         f = lc->cache.bkwd.hdr_base;
-        // TODO: fixme, same as above
-        for (int dst = 0; dst < POLL_NUM_UCSOCKS; ++dst) {
-            if (state->user_clnt_conns[dst].lc_id == lc->id) {
-                if (state->user_clnt_conns[dst].sock >= 0) {
-                    fds[dst + POLL_UCSOCKS_OFF].events |= POLLOUT;
-                    found_user_conn = true;
-                    break;
-                }
-            }
-        }
+        fds[lc->usock_idx + POLL_UCSOCKS_OFF].events |= POLLOUT;
         break;
     default:
         assert(0);
@@ -1254,12 +1251,11 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     return cachefile_write(f, payload, hdr->len, e);
 }
 
-static int process_ack(ConnectivityState *state, struct pollfd fds[],
+static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
-    //char *payload = state->peers[peer_id].ibuf.buf + sizeof(PktHdr);
     CacheFileHeader *f;
     unsigned long long last_acked;
 
@@ -1288,6 +1284,37 @@ static int process_ack(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
+static int process_lc_close(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
+    PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
+
+    LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
+    if (lc == NULL) {
+        err_msg_prepend(e, "cache_data: ");
+        return -1;
+    }
+
+    // If the packet received is BKWD, then this node is the client
+    if (hdr->dir == PKTDIR_BKWD) {
+        assert(lc->serv_id == peer_id); // non-SFN
+        fds[lc->usock_idx + POLL_UCSOCKS_OFF].events |= POLLOUT;
+    }
+    else {
+        assert(lc->clnt_id == peer_id); // non-SFN
+        fds[lc->usock_idx + POLL_USSOCKS_OFF].events |= POLLOUT;
+    }
+
+    lc->received_close = true;
+    // Destroy LC once data finishes sending to the local socket. Set POLLOUT to
+    // force a check on cache contents.
+    
+    // TODO [future work]: pass this close packet to other peers
+
+    return 0;
+}
+
 static int process_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -1300,10 +1327,12 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
         return process_data_packet(state, fds, fd_i, e);
     case PKTTYPE_LC_NEW:
         printf("PKTTYPE_LC_NEW\n");
-        return add_lc_from_peer(state, fds, fd_i, e);
+        return process_lc_new(state, fds, fd_i, e);
     case PKTTYPE_LC_ACK:
         printf("PKTTYPE_LC_ACK\n");
-        return process_ack(state, fds, fd_i, e);
+        return process_lc_ack(state, fds, fd_i, e);
+    case PKTTYPE_LC_CLOSE:
+        return process_lc_close(state, fds, fd_i, e);
     default:
         printf("PKTTYPE unknown\n");
         assert(0); // should never get here
@@ -1439,9 +1468,6 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     unsigned user_id;
     unsigned peer_id;
 
-    // TODO: write to cache (appropriate direction)
-    // TODO: set POLLOUT
-
     //memset(buf, 0, sizeof(buf));
     read_len = read(fds[fd_i].fd, buf, PKT_MAX_PAYLOAD_LEN);
     // EOF
@@ -1508,7 +1534,6 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-// TODO: update for timers?
 static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -1588,8 +1613,9 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     lc->pending_cmd[peer_id] = PEND_NONE;
                 }
                 else {
-                    // TODO: opportunity for ordered queue. Perhaps bump up this
-                    // LC to the head of the queue so it gets considered sooner.
+                    // TODO [future work]: opportunity for ordered queue.
+                    // Perhaps bump up this LC to the head of the queue so it
+                    // gets considered sooner.
 
                     // TODO: optimize loop for non-SFN case?
                 }
@@ -1606,7 +1632,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 assert(lc->pending_data[peer_id] == PEND_NODATA);
 
                 if (obuf_get_empty(&peer->obuf) > pktlen) {
-                    CacheFileHeader *f;
                     PktHdr hdr = {
                         .type = PKTTYPE_LC_CLOSE,
                         .lc_id = lc->id,
@@ -1637,7 +1662,9 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
                     lc->pending_cmd[peer_id] = PEND_NONE;
                     // TODO: delete LC
-                    lc_destroy(state, lc, e);
+                    if (lc_destroy(state, lc->id, e) < 0) {
+                        return -1;
+                    }
                 }
             }
 
@@ -1759,7 +1786,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // possibly add a int for a priority level to check first.
         }
         else {
-            // TODO [future work]: SFN case only -- sending to peer that isn't final destination
+            // TODO [future work]: SFN case only -- sending to peer that isn't
+            // final destination
         }
 
         // Advance LC iterator
@@ -1799,7 +1827,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     int nbytes;
     int obuf_empty;
     WriteBuf *obuf;
-    unsigned peer_id, this_id;
+    unsigned usock_idx, this_id;
     unsigned lc_id;
     LogConn *lc;
     bool unread_data = false;
@@ -1807,17 +1835,17 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     // Set values based on serv/clnt
     if (fdtype == FDTYPE_USERSERV) {
-        peer_id = fd_i - POLL_USSOCKS_OFF;
-        obuf = &state->user_serv_conns[peer_id].obuf;
-        lc_id = state->user_serv_conns[peer_id].lc_id;
+        usock_idx = fd_i - POLL_USSOCKS_OFF;
+        obuf = &state->user_serv_conns[usock_idx].obuf;
+        lc_id = state->user_serv_conns[usock_idx].lc_id;
 
         assert(fds[fd_i].fd == fds[fd_i].fd);
-        assert(state->user_serv_conns[peer_id].sock_status == USSOCK_CONNECTED);
+        assert(state->user_serv_conns[usock_idx].sock_status == USSOCK_CONNECTED);
     }
     else if (fdtype == FDTYPE_USERCLNT) {
-        peer_id = fd_i - POLL_UCSOCKS_OFF;
-        obuf = &state->user_clnt_conns[peer_id].obuf;
-        lc_id = state->user_serv_conns[peer_id].lc_id;
+        usock_idx = fd_i - POLL_UCSOCKS_OFF;
+        obuf = &state->user_clnt_conns[usock_idx].obuf;
+        lc_id = state->user_serv_conns[usock_idx].lc_id;
 
         assert(fds[fd_i].fd == fds[fd_i].fd);
     }
@@ -1874,43 +1902,67 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         printf("write_to_user_sock: nbytes == 0\n");
         return 0;
     }
+    else {
+        // Read that number of bytes
+        assert(nbytes == cachefile_read(cache, this_id, buf, nbytes, e));
+        
+        // Copy to output buffer
+        copy_to_obuf(obuf, buf, nbytes);
 
-    // Read that number of bytes
-    assert(nbytes == cachefile_read(cache, this_id, buf, nbytes, e));
-    
-    // Copy to output buffer
-    copy_to_obuf(obuf, buf, nbytes);
+        // Send ack
+        // Note: this technically only verifies that the data reached this proxy
+        // program and will certainly be written to the destination socket. Since
+        // TCP guarantees delivery, the only way data will not eventually be
+        // delivered is if the user program itself closes the connection before it
+        // has a chance to receive all the data. This is not our problem.
+        cachefile_ack(cache, nbytes);
+        // TODO [future work]: accumulate ACKs to reduce their number, possibly
+        // triggering them with timerfd/poll, like the reconnection system.
 
-    // Send ack
-    // Note: this technically only verifies that the data reached this proxy
-    // program and will certainly be written to the destination socket. Since
-    // TCP guarantees delivery, the only way data will not eventually be
-    // delivered is if the user program itself closes the connection before it
-    // has a chance to receive all the data. This is not our problem.
-    cachefile_ack(cache, nbytes);
-    // TODO [future work]: accumulate ACKs to reduce their number, possibly
-    // triggering them with timerfd/poll, like the reconnection system.
+        // Write as much of output buffer as possible
+        if (writev_from_obuf(obuf, fds[fd_i].fd, e) < 0) {
+            return -1;
+        }
 
-    // Write as much of output buffer as possible
-    if (writev_from_obuf(obuf, fds[fd_i].fd, e) < 0) {
-        return -1;
-    }
-
-    if (obuf_get_unread(obuf) > 0) {
-        unread_data = true;
+        if (obuf_get_unread(obuf) > 0) {
+            unread_data = true;
+        }
     }
 
     if (unread_data) {
         fds[fd_i].events |= POLLOUT;
     }
+    else if (lc->received_close) {
+        // This can only occur after all data has been read from the cache. Also
+        // note that if we received a close message, it arrived after all
+        // available data in the stream had arrived as well, since there is no
+        // way for data in this system to be transmitted out-of-order.
+        close(fds[fd_i].fd);
+        printf("Closed socket (fd=%d)\n", fds[fd_i].fd);
+        if (fdtype == FDTYPE_USERSERV) {
+            state->user_serv_conns[usock_idx].sock = -1;
+        }
+        else {
+            state->user_clnt_conns[usock_idx].sock = -1;
+        }
+        if (lc_destroy(state, lc->id, e) < 0) {
+            return -1;
+        }
+    }
 
     // TODO: make sure we never send duplicate bytes
     // (Can just verify that we never save duplicate bytes to cache?)
-    //
+    
     // TODO: listen sock: decide peer connect race condition based on lowest
     // lc_id
 
     return 0;
+}
+
+static int handle_pollout_userclnt(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    return write_to_user_sock(state, fds, fd_i, FDTYPE_USERCLNT, e);
 }
 
 static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[],
@@ -1994,7 +2046,7 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
         // TODO: write data from LC
         // handle_pollout_userclnt
         // write data to user
-        return write_to_user_sock(state, fds, fd_i, FDTYPE_USERCLNT, e);
+        return handle_pollout_userclnt(state, fds, fd_i, e);
         break;
     case FDTYPE_USERSERV:
         // a) Nonblocking connection attempt succeeded

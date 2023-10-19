@@ -55,7 +55,8 @@ typedef enum {
 typedef enum {
     PKTTYPE_DATA = 0,
     PKTTYPE_LC_NEW = 1,
-    PKTTYPE_LC_ACK = 2
+    PKTTYPE_LC_ACK = 2,
+    PKTTYPE_LC_CLOSE = 3
 } PktType;
 
 
@@ -120,10 +121,16 @@ typedef struct {
     Cache cache;
     PendingCmd pending_cmd[POLL_NUM_PSOCKS]; // same as type field of PktHdr
     PendingData pending_data[POLL_NUM_PSOCKS];
-    //struct in_addr clnt;
-    //struct in_addr serv;
-    //unsigned inst;
+    bool received_close;
+    int usock_idx;
 } LogConn;
+
+typedef struct {
+    unsigned id;
+    unsigned clnt_id;
+    unsigned serv_id;
+    in_port_t serv_port;
+} LogConnPkt;
 
 typedef struct {
     char buf[PEER_BUF_LEN];
