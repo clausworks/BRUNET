@@ -1331,6 +1331,16 @@ static int obuf_get_unacked(WriteBuf *buf) {
     }
 }
 
+/* Calculates the number of bytes acknowledged by TCP on the given socket and
+ * updates the buffer's internal ack pointer accordingly. This frees up space in
+ * the buffer for additional writes.
+ *
+ * Returns number of new bytes acked as a 32-bit integer, or -1 on failure.
+ *
+ * Note that this function should not be used to update a logical connection's
+ * ack status unless the associated output buffer delivers raw bytes to the
+ * stream's destination.
+ */
 static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
     long long unsigned current_acked;
     long long unsigned ack_increment;
@@ -1353,12 +1363,13 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
         buf->last_acked += 1;
     }
 
+    // Ensures ack_increment can fit in an int32_t value
     assert(ack_increment <= obuf_get_unacked(buf));
 
     buf->a = (buf->a + ack_increment) % buf->len;
     buf->last_acked += ack_increment;
 
-    return 0;
+    return (int)(ack_increment);
 }
 
 
@@ -1910,8 +1921,8 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
 void test() {
     printf("Running global test function...\n\n\n");
     //__test_error();
-    __test_dict();
-    //__test_caching();
+    //__test_dict();
+    __test_caching();
 }
 #endif
 
