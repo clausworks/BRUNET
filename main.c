@@ -1909,11 +1909,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         unread_data = true;
     }
 
-    if (nbytes == 0) {
-        printf("write_to_user_sock: nbytes == 0\n");
-        return 0;
-    }
-    else {
+    if (nbytes > 0) {
         // Read that number of bytes
         assert(nbytes == cachefile_read(cache, this_id, buf, nbytes, e));
         
@@ -1941,6 +1937,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     }
 
     if (unread_data) {
+        // Do everything again!
         fds[fd_i].events |= POLLOUT;
     }
     else if (lc->received_close) {
