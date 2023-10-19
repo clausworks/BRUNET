@@ -1027,6 +1027,8 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
         assert(lc->clnt_id == peer_id); // non-SFN
         f = lc->cache.fwd.hdr_base;
         // TODO: speed this up by sorting list and doing a bsearch?
+        // Or add entry to LC (local sock)
+        // Note: we still need to ahve user_serv_conns to sync w/ fds
         for (int dst = 0; dst < POLL_NUM_USSOCKS; ++dst) {
             if (state->user_serv_conns[dst].lc_id == lc->id) {
                 if (state->user_serv_conns[dst].sock >= 0) {
@@ -1040,7 +1042,7 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     case PKTDIR_BKWD:
         assert(lc->serv_id == peer_id); // non-SFN
         f = lc->cache.bkwd.hdr_base;
-        // TODO: speed this up by sorting list and doing a bsearch?
+        // TODO: fixme, same as above
         for (int dst = 0; dst < POLL_NUM_UCSOCKS; ++dst) {
             if (state->user_clnt_conns[dst].lc_id == lc->id) {
                 if (state->user_clnt_conns[dst].sock >= 0) {
@@ -1060,6 +1062,39 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     return cachefile_write(f, payload, hdr->len, e);
 }
 
+static int process_ack(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
+    PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
+    //char *payload = state->peers[peer_id].ibuf.buf + sizeof(PktHdr);
+    CacheFileHeader *f;
+    unsigned long long last_acked;
+
+    LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
+    if (lc == NULL) {
+        err_msg_prepend(e, "cache_data: ");
+        return -1;
+    }
+    
+    if (hdr->dir == PKTDIR_FWD) {
+        assert(lc->clnt_id == peer_id); // non-SFN
+        f = lc->cache.fwd.hdr_base;
+    }
+    else {
+        assert(lc->serv_id == peer_id); // non-SFN
+        f = lc->cache.bkwd.hdr_base;
+    }
+
+    last_acked = cachefile_get_ack(f);
+    assert(last_acked < hdr->off); // non-SFN only
+    cachefile_ack(f, hdr->off - last_acked);
+
+    // TODO [future work]: pass this ACK packet to other peers
+
+    return 0;
+}
+
 static int process_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -1070,12 +1105,14 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
     case PKTTYPE_DATA:
         printf("PKTTYPE_DATA\n");
         return process_data_packet(state, fds, fd_i, e);
-        break;
     case PKTTYPE_LC_NEW:
         printf("PKTTYPE_LC_NEW\n");
         return add_lc_from_peer(state, fds, fd_i, e);
-        break;
+    case PKTTYPE_LC_ACK:
+        printf("PKTTYPE_LC_ACK\n");
+        return process_ack(state, fds, fd_i, e);
     default:
+        printf("PKTTYPE unknown\n");
         assert(0); // should never get here
     }
 
