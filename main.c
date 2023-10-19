@@ -1877,23 +1877,14 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
 
+    // Set variables
     if (fdtype == FDTYPE_USERSERV) {
         this_id = lc->serv_id;
         cache = lc->cache.fwd.hdr_base;
-        // Schedule ack packet
-        lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
-        fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
-        printf("Set POLLOUT on clnt, fd %d\n",
-            fds[lc->clnt_id + POLL_PSOCKS_OFF].fd);
     }
     else {
         this_id = lc->clnt_id;
         cache = lc->cache.bkwd.hdr_base;
-        // Schedule ack packet
-        lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
-        fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
-        printf("Set POLLOUT on serv, fd %d\n",
-            fds[lc->serv_id + POLL_PSOCKS_OFF].fd);
     }
 
     // Find how much we can write
@@ -1902,16 +1893,30 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         nbytes = PKT_MAX_PAYLOAD_LEN;
         unread_data = true;
     }
-
     obuf_empty = obuf_get_empty(obuf);
     if (obuf_empty < nbytes) {
         nbytes = obuf_empty;
         unread_data = true;
     }
 
+    // Write, if we have data (no data could mean LC_CLOSE packet)
     if (nbytes > 0) {
         // Read that number of bytes
         assert(nbytes == cachefile_read(cache, this_id, buf, nbytes, e));
+
+        // Schedule ack packet
+        if (fdtype == FDTYPE_USERSERV) {
+            lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
+            fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+            printf("Set POLLOUT on clnt, fd %d\n",
+                fds[lc->clnt_id + POLL_PSOCKS_OFF].fd);
+        }
+        else {
+            lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
+            fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+            printf("Set POLLOUT on serv, fd %d\n",
+                fds[lc->serv_id + POLL_PSOCKS_OFF].fd);
+        }
         
         // Copy to output buffer
         copy_to_obuf(obuf, buf, nbytes);
@@ -1941,10 +1946,11 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         fds[fd_i].events |= POLLOUT;
     }
     else if (lc->received_close) {
-        // This can only occur after all data has been read from the cache. Also
-        // note that if we received a close message, it arrived after all
-        // available data in the stream had arrived as well, since there is no
-        // way for data in this system to be transmitted out-of-order.
+        // A received close command can only be processed after all data has
+        // been read from the cache. Also note that if we received a close
+        // message, it arrived after all available data in the stream had
+        // arrived as well, since there is no way for data in this system to be
+        // transmitted out-of-order.
         close(fds[fd_i].fd);
         printf("Closed socket (fd=%d)\n", fds[fd_i].fd);
         if (fdtype == FDTYPE_USERSERV) {
