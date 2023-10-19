@@ -1700,7 +1700,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
 
-    // Update buffer acknowledgement
+    // Free up buffer space
     if (obuf_update_ack(obuf, fds[fd_i].fd, e) < 0) {
         err_msg_prepend(e, "write_to_user_sock: ");
         return -1;
@@ -1712,6 +1712,8 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         // Schedule ack packet
         lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
         fds[lc->clnt_id + POLL_UCSOCKS_OFF].events |= POLLOUT;
+        printf("Set POLLOUT on clnt, fd %d\n",
+            fds[lc->clnt_id + POLL_UCSOCKS_OFF].fd);
     }
     else {
         this_id = lc->clnt_id;
@@ -1719,6 +1721,8 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         // Schedule ack packet
         lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
         fds[lc->serv_id + POLL_USSOCKS_OFF].events |= POLLOUT;
+        printf("Set POLLOUT on serv, fd %d\n",
+            fds[lc->serv_id + POLL_USSOCKS_OFF].fd);
     }
 
     // Find how much we can write
@@ -1747,11 +1751,13 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     // Send ack
     // Note: this technically only verifies that the data reached this proxy
-    // program and will certainly be written to the destination socket. Since TCP guarantees
-    // delivery, the only way data will not eventually be delivered is if the
-    // user program itself closes the connection before it has a chance to
-    // receive all the data. This is not our problem.
+    // program and will certainly be written to the destination socket. Since
+    // TCP guarantees delivery, the only way data will not eventually be
+    // delivered is if the user program itself closes the connection before it
+    // has a chance to receive all the data. This is not our problem.
     cachefile_ack(cache, nbytes);
+    // TODO [future work]: accumulate ACKs to reduce their number, possibly
+    // triggering them with timerfd/poll, like the reconnection system.
 
     // Write as much of output buffer as possible
     if (writev_from_obuf(obuf, fds[fd_i].fd, e) < 0) {
