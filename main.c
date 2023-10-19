@@ -1223,7 +1223,6 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
     char *payload = state->peers[peer_id].ibuf.buf + sizeof(PktHdr);
     CacheFileHeader *f;
-    bool found_user_conn = false;
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
@@ -1245,8 +1244,6 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     default:
         assert(0);
     }
-
-    assert(found_user_conn);
 
     return cachefile_write(f, payload, hdr->len, e);
 }
