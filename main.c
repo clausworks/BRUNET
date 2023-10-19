@@ -1711,18 +1711,18 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         cache = lc->cache.fwd.hdr_base;
         // Schedule ack packet
         lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
-        fds[lc->clnt_id + POLL_UCSOCKS_OFF].events |= POLLOUT;
+        fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         printf("Set POLLOUT on clnt, fd %d\n",
-            fds[lc->clnt_id + POLL_UCSOCKS_OFF].fd);
+            fds[lc->clnt_id + POLL_PSOCKS_OFF].fd);
     }
     else {
         this_id = lc->clnt_id;
         cache = lc->cache.bkwd.hdr_base;
         // Schedule ack packet
         lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
-        fds[lc->serv_id + POLL_USSOCKS_OFF].events |= POLLOUT;
+        fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         printf("Set POLLOUT on serv, fd %d\n",
-            fds[lc->serv_id + POLL_USSOCKS_OFF].fd);
+            fds[lc->serv_id + POLL_PSOCKS_OFF].fd);
     }
 
     // Find how much we can write
