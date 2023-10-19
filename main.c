@@ -1077,7 +1077,8 @@ static int process_ack(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
     
-    if (hdr->dir == PKTDIR_FWD) {
+    // An ACK packet moving backwards is for the forwards stream
+    if (hdr->dir == PKTDIR_BKWD) {
         assert(lc->clnt_id == peer_id); // non-SFN
         f = lc->cache.fwd.hdr_base;
     }
