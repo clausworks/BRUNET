@@ -520,6 +520,7 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
     // Create a new cache files for a connection (fwd, bkwd)
     char fname[CACHE_FNAME_SIZE];
     CacheFileHeader *f;
+    unsigned mmap_len;
 
     assert(_global_cache_init == true);
 
@@ -542,7 +543,9 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
     cache->bkwd.fd = _create_file(fname, e);
     if (cache->bkwd.fd < 0) { return -1; }
 
-    f = mmap(0, CACHE_DEFAULT_PAGES * _page_bytes,
+    mmap_len = CACHE_DEFAULT_PAGES * _page_bytes;
+
+    f = mmap(0, mmap_len,
         PROT_READ | PROT_WRITE, MAP_SHARED, cache->fwd.fd, 0);
     if (f == MAP_FAILED) {
         err_msg_errno(e, "mmap failed (fwd)");
@@ -550,8 +553,9 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
     }
     _cachefile_init(f, n_peers);//, peers, n_peers);
     cache->fwd.hdr_base = f;
+    cache->fwd.mmap_len = mmap_len;
 
-    f = mmap(0, CACHE_DEFAULT_PAGES * _page_bytes,
+    f = mmap(0, mmap_len,
         PROT_READ | PROT_WRITE, MAP_SHARED, cache->bkwd.fd, 0);
     if (f == MAP_FAILED) {
         err_msg_errno(e, "mmap failed (bkwd)");
@@ -559,6 +563,7 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
     }
     _cachefile_init(f, n_peers);//, peers, n_peers);
     cache->bkwd.hdr_base = f;
+    cache->bkwd.mmap_len = mmap_len;
 
     return 0;
 }
