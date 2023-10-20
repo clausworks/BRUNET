@@ -773,10 +773,11 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         state->user_clnt_conns[i].sock = -1;
 
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
-        if (lc == NULL) {
+        assert(lc != NULL);
+        /*if (lc == NULL) {
             err_msg_prepend(e, "handle_disconnect: ");
             return -1;
-        }
+        }*/
         // Note on pending command: This will overwrite the previous command. It
         // is not possible for the previous command to be PEND_LC_NEW because
         // that is cleared as soon as the packet is generated. If the previous
@@ -792,10 +793,11 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         state->user_serv_conns[i].sock = -1;
         state->user_serv_conns[i].sock_status = USSOCK_INVALID;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
-        if (lc == NULL) {
+        assert(lc != NULL);
+        /*if (lc == NULL) {
             err_msg_prepend(e, "handle_disconnect: ");
             return -1;
-        }
+        }*/
         lc->pending_cmd[lc->clnt_id] = PEND_LC_WILLCLOSE;
         // TODO [future work]: apply pending command to all peers
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
@@ -1225,10 +1227,11 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     CacheFileHeader *f;
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
-    if (lc == NULL) {
+    assert(lc != NULL);
+    /*if (lc == NULL) {
         err_msg_prepend(e, "cache_data: ");
         return -1;
-    }
+    }*/
     
     switch (hdr->dir) {
     case PKTDIR_FWD:
@@ -1867,10 +1870,11 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     // Get LC, so we can read the cache
     lc = dict_get(state->log_conns, lc_id, e);
-    if (lc == NULL) {
+    assert(lc != NULL);
+    /*if (lc == NULL) {
         err_msg_prepend(e, "write_to_user_sock: ");
         return -1;
-    }
+    }*/
 
     // Free up buffer space
     if (obuf_update_ack(obuf, fds[fd_i].fd, e) < 0) {
@@ -2128,28 +2132,28 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             if (fds[i].revents & POLLHUP) {
                 --fd_remaining;
                 err_msg(e, "POLLHUP");
-                handle_disconnect(state, fds, i, main_err);
+                handle_disconnect(state, fds, i, e);
                 continue;
             }
             // Event: hangup (peer write end)
             if (fds[i].revents & POLLRDHUP) {
                 --fd_remaining;
                 err_msg(e, "POLLRDHUP");
-                handle_disconnect(state, fds, i, main_err);
+                handle_disconnect(state, fds, i, e);
                 continue;
             }
             // Event: fd not open
             else if (fds[i].revents & POLLNVAL) {
                 --fd_remaining;
                 err_msg(e, "POLLNVAL");
-                handle_disconnect(state, fds, i, main_err);
+                handle_disconnect(state, fds, i, e);
                 continue;
             }
             // Event: other error
             else if (fds[i].revents & POLLERR) {
                 --fd_remaining;
                 err_msg(e, "POLLERR");
-                handle_disconnect(state, fds, i, main_err);
+                handle_disconnect(state, fds, i, e);
                 continue;
             }
             // Event: readable
