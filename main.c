@@ -1860,7 +1860,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     else if (fdtype == FDTYPE_USERCLNT) {
         usock_idx = fd_i - POLL_UCSOCKS_OFF;
         obuf = &state->user_clnt_conns[usock_idx].obuf;
-        lc_id = state->user_serv_conns[usock_idx].lc_id;
+        lc_id = state->user_clnt_conns[usock_idx].lc_id;
 
         assert(fds[fd_i].fd == fds[fd_i].fd);
     }
