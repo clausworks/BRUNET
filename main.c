@@ -1226,6 +1226,14 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     char *payload = state->peers[peer_id].ibuf.buf + sizeof(PktHdr);
     CacheFileHeader *f;
 
+    // TODO [future work]: The assertion below may fail if a proxy program is
+    // killed and restarted while the current one remains open. This is because
+    // the static counter variable determining the logical connection identifier
+    // (lc_id) is reset. For this project, we assume (for the sake of
+    // simplicity) that proxy programs will remain running for the lifetime of
+    // the mission, or else all programs will restart at the same time. Future
+    // work could include a packet indicating a restart to possibly re-sync
+    // LC IDs, or request other nodes restart their proxy programs as well.
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     assert(lc != NULL);
     /*if (lc == NULL) {
