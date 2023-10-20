@@ -791,7 +791,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         i = fd_i - POLL_USSOCKS_OFF;
         state->user_serv_conns[i].sock = -1;
         state->user_serv_conns[i].sock_status = USSOCK_INVALID;
-        lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
+        lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         if (lc == NULL) {
             err_msg_prepend(e, "handle_disconnect: ");
             return -1;
@@ -1329,6 +1329,7 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
         printf("PKTTYPE_LC_ACK\n");
         return process_lc_ack(state, fds, fd_i, e);
     case PKTTYPE_LC_CLOSE:
+        printf("PKTTYPE_LC_CLOSE\n");
         return process_lc_close(state, fds, fd_i, e);
     default:
         printf("PKTTYPE unknown\n");
