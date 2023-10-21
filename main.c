@@ -1152,7 +1152,7 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
     printf("process_lc_new\n");
 
     PktHdr *hdr = (PktHdr *)(pktbuf);
-    LogConn *lc_buf = (LogConn *)(pktbuf + sizeof(PktHdr));
+    LogConnPkt *pkt_lc = (LogConnPkt *)(pktbuf + sizeof(PktHdr));
 
     LogConn *lc = malloc(sizeof(LogConn));
     if (lc == NULL) {
@@ -1162,12 +1162,11 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
 
     memset(lc, 0, sizeof(LogConn));
 
-    assert(lc_buf->id == hdr->lc_id);
-    lc->id = lc_buf->id;
-    lc->clnt_id = lc_buf->clnt_id;
-    lc->serv_id = lc_buf->serv_id;
-    lc->serv_port = lc_buf->serv_port;
-    // Don't copy cache or command fields
+    assert(pkt_lc->id == hdr->lc_id);
+    lc->id = pkt_lc->id;
+    lc->clnt_id = pkt_lc->clnt_id;
+    lc->serv_id = pkt_lc->serv_id;
+    lc->serv_port = pkt_lc->serv_port;
     
     if (cache_init(&lc->cache, lc->id, state->n_peers, e) < 0) {
         err_msg_prepend(e, "process_lc_new: ");
@@ -1616,8 +1615,14 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         .off = 0,
                         .len = sizeof(LogConn)
                     };
+                    LogConnPkt payload = {
+                        .id = lc->id,
+                        .clnt_id = lc->clnt_id,
+                        .serv_id = lc->serv_id,
+                        .serv_port = lc->serv_port
+                    };
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
-                    copy_to_obuf(&peer->obuf, (char *)(lc), sizeof(LogConn));
+                    copy_to_obuf(&peer->obuf, (char *)(&payload), sizeof(LogConnPkt));
 
                     lc->pending_cmd[peer_id] = PEND_NONE;
                 }
