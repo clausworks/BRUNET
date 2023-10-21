@@ -1613,7 +1613,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         .lc_id = lc->id,
                         .dir = PKTDIR_FWD,
                         .off = 0,
-                        .len = sizeof(LogConn)
+                        .len = sizeof(LogConnPkt)
                     };
                     LogConnPkt payload = {
                         .id = lc->id,
