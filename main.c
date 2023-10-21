@@ -1613,8 +1613,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     if (peer->lc_iter == NULL) {
         peer->lc_iter = dict_iter_new(lcs);
         if (peer->lc_iter == NULL) {
-            err_msg(e, "send_packet: no logical connections");
-            return -1;
+            printf("Note: send_packet: no logical connections");
+            return 0;
         }
     }
 
