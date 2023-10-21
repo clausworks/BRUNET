@@ -66,7 +66,7 @@ int rs_make_client_chain(struct nft_ctx *nft, ManagedPair *pair) {
 
     // FIXME: read this value from config file
     const unsigned short NAT_PORT = 4321;
-    // TODO: check that this doesn't conflict with `tcp dport`
+    // TODO: check that this doesn't conflict with `tcp dport`, set by user
 
     // Make chain
     result = nft_run_cmd_from_buffer(nft,
@@ -90,11 +90,12 @@ int rs_make_client_chain(struct nft_ctx *nft, ManagedPair *pair) {
     // Allocate and initialize command buffer for rule
     asprintf(&cmdbuf, 
         "add rule ip " RS_TABLE_NAME " " RS_CLIENT_CHAIN_NAME " "
-        "ip daddr %s ip saddr %s tcp dport %hu dnat ip to %s:%hu",
+        //"ip daddr %s ip saddr %s tcp dport %hu dnat ip to %s:%hu",
+        "ip daddr %s ip saddr %s tcp dport %hu dnat ip to 127.0.0.1:%hu",
         other_str,
         this_str,
         dport_h,
-        this_str,
+        //this_str,
         NAT_PORT
         );
     result = nft_run_cmd_from_buffer(nft, cmdbuf);

@@ -707,7 +707,6 @@ static int init_connectivity_state(ConnectivityState *state,
 
     memset(state, 0, sizeof(ConnectivityState));
     
-    // TODO: loopback
     if (inet_aton("127.0.0.1", &loopback) == 0) {
         err_msg(e, "Loopback address conversion failed: inet_aton");
         return -1;
@@ -1008,8 +1007,8 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
 }
 
 
-static int handle_peer_conn(ConnectivityState *state, int sock,
-    struct sockaddr_in *peer_addr, ErrorStatus *e) {
+static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
+    int sock, struct sockaddr_in *peer_addr, ErrorStatus *e) {
 
     PeerState *result;
     PeerState dummy = {.addr = peer_addr->sin_addr};
@@ -1035,12 +1034,14 @@ static int handle_peer_conn(ConnectivityState *state, int sock,
     case PSOCK_INVALID: // never initialized
         state->peers[i].sock = sock;
         state->peers[i].sock_status = PSOCK_CONNECTED;
-        // TODO: ensure fds are updated
+        // enable pollout so any data waiting gets sent
+        fds[i + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
     case PSOCK_CONNECTED: // already connected
+        // TODO: algorithm to resolve conflicts
         printf("Already connected to peer: closing sock %d\n", sock);
         close(sock);
-        return 0;
+        break;
     case PSOCK_THIS_DEVICE:
         assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
         //err_msg(e, "peer connection from this device");
@@ -1163,7 +1164,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
         break; 
     case POLL_LSOCK_P_IDX:
         // Loop through peers to find which this connection came from
-        if (handle_peer_conn(state, sock, &peer_addr, e) < 0) {
+        if (handle_peer_conn(state, fds, sock, &peer_addr, e) < 0) {
             return -1;
         }
         break;
