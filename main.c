@@ -192,7 +192,7 @@ int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
     }
 
     // set up address
-    addr.s_addr = INADDR_ANY; // FIXME: remove (debug only)
+    //addr.s_addr = INADDR_ANY; // FIXME: remove (debug only)
 
     memset(&serv_addr, 0, sizeof(struct sockaddr_in));
     serv_addr.sin_family = AF_INET;
@@ -703,10 +703,17 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
 static int init_connectivity_state(ConnectivityState *state,
     ConfigFileParams *config, ErrorStatus *e) {
 
+    struct in_addr loopback;
+
     memset(state, 0, sizeof(ConnectivityState));
     
     // TODO: loopback
-    state->user_lsock = begin_listen(config->this_dev,
+    if (inet_aton("127.0.0.1", &loopback) == 0) {
+        err_msg(e, "Loopback address conversion failed: inet_aton");
+        return -1;
+    }
+
+    state->user_lsock = begin_listen(loopback,
         htons(CF_USER_LISTEN_PORT), e);
     if (state->user_lsock < 0) {
         err_msg_prepend(e, "user socket ");
