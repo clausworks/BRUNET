@@ -36,18 +36,28 @@ void init_sighandlers() {
 
     sa.sa_handler = sighandler_cleanup;
 
+    // Signals to block during execution
     if (0 != sigemptyset(&(sa.sa_mask))) {
         perror("sigemptyset");
-        exit(EXIT_FAILURE); }
-    //TODO: add SIGTERM
+        exit(EXIT_FAILURE);
+    }
     if (0 != sigaddset(&(sa.sa_mask), SIGINT)) {
+        perror("sigaddset");
+        exit(EXIT_FAILURE);
+    }
+    if (0 != sigaddset(&(sa.sa_mask), SIGTERM)) {
         perror("sigaddset");
         exit(EXIT_FAILURE);
     }
 
     sa.sa_flags = 0;
 
+    // Enable handler on these signals
     if (0 != sigaction(SIGINT, &sa, NULL)) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
+    if (0 != sigaction(SIGTERM, &sa, NULL)) {
         perror("sigaction");
         exit(EXIT_FAILURE);
     }
@@ -120,6 +130,44 @@ static int set_so_nodelay(int sock, ErrorStatus *e) {
     return 0;
 }
 
+static int set_so_timeout(int sock, ErrorStatus *e) {
+    int to = 5;
+    int status;
+
+    status = setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT, &to, sizeof(int));
+    if (status < 0) {
+        err_msg_errno(e, "set_so_timeout");
+        return -1;
+    }
+    return 0;
+}
+
+
+/* static int set_so_quickack(int sock, ErrorStatus *e) {
+    int value = 1;
+    socklen_t optlen = sizeof(int);
+    int status;
+
+    status = getsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, &value, &optlen);
+    if (status < 0) {
+        err_msg_errno(e, "set_so_quickack: getsockopt");
+        return -1;
+    }
+
+    //printf("TCP_QUICKACK: optlen = %u\n", optlen);
+
+    if (value) {
+        status = setsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, &value, sizeof(int));
+        if (status < 0) {
+            err_msg_errno(e, "set_so_quickack: setsockopt");
+            return -1;
+        }
+        //printf("Enabled TCP_QUICKACK\n");
+    }
+
+    return 0;
+} */
+
 /* Create a socket and start listening on it. Socket will be non-blocking.
  */
 int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
@@ -188,6 +236,8 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
         err_msg_errno(e, "attempt_connect: set O_NONBLOCK failed");
         return -1;
     }
+
+    if (set_so_timeout(sock, e)) { return -1; }
 
     // init serv_addr
     memset(&serv_addr, 0, sizeof(struct sockaddr_in));
@@ -688,33 +738,6 @@ static int init_connectivity_state(ConnectivityState *state,
 
     return 0;
 }
-
-/*
-static int set_so_quickack(int sock, ErrorStatus *e) {
-    int value = 1;
-    socklen_t optlen = sizeof(int);
-    int status;
-
-    status = getsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, &value, &optlen);
-    if (status < 0) {
-        err_msg_errno(e, "set_so_quickack: getsockopt");
-        return -1;
-    }
-
-    //printf("TCP_QUICKACK: optlen = %u\n", optlen);
-
-    if (value) {
-        status = setsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, &value, sizeof(int));
-        if (status < 0) {
-            err_msg_errno(e, "set_so_quickack: setsockopt");
-            return -1;
-        }
-        //printf("Enabled TCP_QUICKACK\n");
-    }
-
-    return 0;
-}
-*/
 
 /******************************************************************************
  * POLL HANDLER FUNCTIONS
@@ -1603,8 +1626,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // PACKET: LC_NEW
             if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
                 // Copy to output buf only if there's enough space
-                // TODO: don't transfer whole LC, just the info that we process
-                // on the other end. This is wasteful.
                 pktlen = sizeof(PktHdr) + sizeof(LogConn);
                 if (obuf_get_empty(&peer->obuf) > pktlen) {
                     //char fakebuf[1024];
