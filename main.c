@@ -566,6 +566,8 @@ static void add_peer(ConnectivityState *state, int *p,
         state->peers[*p].sock = -1; 
         if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
             state->peers[*p].sock_status = PSOCK_THIS_DEVICE;
+            state->this_peer_id = *p;
+            printf("this_peer_id = %d\n", *p);
         }
         else {
             state->peers[*p].sock_status = PSOCK_INVALID;
@@ -1012,7 +1014,7 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
 
     PeerState *result;
     PeerState dummy = {.addr = peer_addr->sin_addr};
-    ptrdiff_t i;
+    ptrdiff_t peer_id;
 
     result = bsearch(&dummy, state->peers, state->n_peers,
         sizeof(PeerState), _peer_compare_addr);
@@ -1021,21 +1023,21 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
             inet_ntoa(peer_addr->sin_addr));
         return -1;
     }
-    i = result - state->peers; // get index
+    peer_id = result - state->peers; // get index
 
     // Check status of existing socket:
     // a) It's actually a timer fd. Cancel it.
     // TODO finish description?
-    switch (state->peers[i].sock_status) {
+    switch (state->peers[peer_id].sock_status) {
     case PSOCK_WAITING: // timerfd
     case PSOCK_CONNECTING: // not yet connected
-        close(state->peers[i].sock);
+        close(state->peers[peer_id].sock);
         // (no break)
     case PSOCK_INVALID: // never initialized
-        state->peers[i].sock = sock;
-        state->peers[i].sock_status = PSOCK_CONNECTED;
+        state->peers[peer_id].sock = sock;
+        state->peers[peer_id].sock_status = PSOCK_CONNECTED;
         // enable pollout so any data waiting gets sent
-        fds[i + POLL_PSOCKS_OFF].events |= POLLOUT;
+        fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
     case PSOCK_CONNECTED: // already connected
         // TODO: algorithm to resolve conflicts
@@ -1043,7 +1045,7 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
         close(sock);
         break;
     case PSOCK_THIS_DEVICE:
-        assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
+        assert(state->peers[peer_id].sock_status != PSOCK_THIS_DEVICE);
         //err_msg(e, "peer connection from this device");
         //close(sock);
         //return -1;
@@ -2037,6 +2039,7 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
     case USSOCK_CONNECTING: // was connecting
         printf("handle_pollout_userserv: USSOCK_CONNECTING\n");
         fds[fd_i].events = POLLIN | POLLRDHUP;
+        // TODO: enable POLLOUT?
         state->user_serv_conns[i].sock_status = USSOCK_CONNECTED;
         printf("Connected (fd %d)\n", fds[fd_i].fd);
         break;
@@ -2065,7 +2068,7 @@ static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
     switch (state->peers[i].sock_status) {
     case PSOCK_CONNECTING: // was connecting
         printf("handle_pollout_peer: PSOCK_CONNECTING\n");
-        fds[fd_i].events = POLLIN | POLLRDHUP;
+        fds[fd_i].events = POLLIN | POLLRDHUP | POLLOUT;
         state->peers[i].sock_status = PSOCK_CONNECTED;
         printf("Connected (fd %d)\n", fds[fd_i].fd);
         break;
