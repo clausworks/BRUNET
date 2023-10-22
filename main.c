@@ -245,9 +245,10 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
 
     if (set_so_timeout(sock, e)) { return -1; }
 
-    // bind client side to the local address
-    // This is necessary because sometimes this gets assigned the IP address of
-    // the wrong interface. (No idea why that happens...)
+    // bind client side to the local address Note: this is necessary because
+    // sometimes this gets assigned the IP address of the wrong interface (e.g.
+    // 192.168.*.* from eth0 instead of 10.*.*.* from wlan0). No idea why this
+    // happens...
     memset(&clnt_addr, 0, sizeof(struct sockaddr_in));
     clnt_addr.sin_family = AF_INET;
     clnt_addr.sin_addr = clnt_ip;
@@ -256,17 +257,27 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
     // bind to local address
     if (bind(sock, (struct sockaddr *)(&clnt_addr),
         sizeof(struct sockaddr_in)) < 0) {
+        
+        // Acceptable if this fails. Failure to bind is not catastrophic.
 
-        close(sock);
+        printf("attempt_connect: (warning) failed to bind to %s failed\n", inet_ntoa(clnt_ip));
+        // do nothing... see note right below
 
-        err_msg_errno(e, "attempt_connect: bind");
-        return -1;
+        //close(sock); // reenable after handling return value properly
+        //err_msg_errno(e, "attempt_connect: bind");
+        //return -1;
+        // TODO: this return value (-1) needs to be handled appropriately where
+        // this function is called. Most places a timer should be set to
+        // re-attempt connection.  Perhaps sonner than the normal peer-reconnect
+        // interval.
+    }
+    else {
+        printf("attempt_connect: bind to %s\n", inet_ntoa(clnt_ip));
     }
 
     printf("Attempting to connect to %s:%hu (fd=%d)\n", inet_ntoa(serv_ip),
         ntohs(serv_port), sock);
 
-    printf("    (bound to %s)\n", inet_ntoa(clnt_ip));
 
     // init serv_addr
     memset(&serv_addr, 0, sizeof(struct sockaddr_in));
@@ -827,14 +838,17 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     printf("Closed socket (fd=%d)\n", fds[fd_i].fd);
 
     switch (get_fd_type(state, fd_i)) {
+
     case FDTYPE_LISTEN:
         // fatal error
         err_msg(e, "listening socket failed");
         return -1;
+
     case FDTYPE_TIMER:
         // fatal error
         err_msg(e, "timer fd failed");
         return -1;
+
     case FDTYPE_USERCLNT:
         i = fd_i - POLL_UCSOCKS_OFF;
         state->user_clnt_conns[i].sock = -1;
@@ -855,6 +869,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         // TODO [future work]: apply pending command to all peers
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
+
     case FDTYPE_USERSERV:
         i = fd_i - POLL_USSOCKS_OFF;
         state->user_serv_conns[i].sock = -1;
@@ -866,21 +881,31 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
             return -1;
         }*/
         lc->pending_cmd[lc->clnt_id] = PEND_LC_WILLCLOSE;
-        // TODO [future work]: apply pending command to all peers
+        // TODO [future work]: apply pending command to all peers for
+        // store-forward case.
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
+
     case FDTYPE_PEER:
         // Instead of setting sock as invalid, set timer for reconnect
+        // TODO [future work]: this needs to be tested. Right now, we simply
+        // choose to call connect from the endpoint with the lower index in the
+        // peer array (i.e. "peer_id"). The other side calls accept. There's
+        // probably a better way to do this, but since we assume the devices in
+        // the system are symmetric, this is good enough.
         i = fd_i - POLL_PSOCKS_OFF;
         assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
         // TODO: attempt reconnect immediately
-        if ((s = create_reconnect_timer(e)) < 0) {
-            return -1; // fatal error
+        if (state->this_dev_id < i) {
+            if ((s = create_reconnect_timer(e)) < 0) {
+                return -1; // fatal error
+            }
+            fds[fd_i].events = POLLIN; // TODO: change this back at retry
+            state->peers[i].sock = s;
+            state->peers[i].sock_status = PSOCK_WAITING;
         }
-        fds[fd_i].events = POLLIN; // TODO: change this back at retry
-        state->peers[i].sock = s;
-        state->peers[i].sock_status = PSOCK_WAITING;
         break;
+
     }
     
     return 0;
