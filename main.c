@@ -2257,6 +2257,11 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             else if (fds[i].revents & POLLNVAL) {
                 --fd_remaining;
                 err_msg(e, "POLLNVAL");
+                // For this case, this is probably a bug and not the result of
+                // weird runtime conditions. Disable any further events.
+                fds[i].events = 0;
+                printf("Warning: disabled events on fds[%d]; fd was %d, now is -1.\n", i, fds[i].fd);
+                fds[i].fd = -1;
                 handle_disconnect(state, fds, i, e);
                 continue;
             }
