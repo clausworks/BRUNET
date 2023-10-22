@@ -176,7 +176,7 @@ typedef struct {
     int user_lsock; // sock to get connections to user programs
     int peer_lsock; // sock to to get connections to other proxies
     PeerState peers[POLL_NUM_PSOCKS]; // peers in system, with sockets
-    int this_peer_id; // index into peers for this device
+    int this_dev_id; // index into peers for this device
     int n_peers; // number of valid contiguous elements in peers[]
     UserClntConnState user_clnt_conns[POLL_NUM_UCSOCKS]; // local user clients
     UserServConnState user_serv_conns[POLL_NUM_USSOCKS]; // local user servers

@@ -217,9 +217,12 @@ int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
     return sock;
 }
 
-int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
+int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
+    struct in_addr clnt_ip, ErrorStatus *e) {
+
+    int one = 1;
     int sock; // socket descriptor
-    struct sockaddr_in serv_addr;
+    struct sockaddr_in serv_addr, clnt_addr;
     int status;
 
 
@@ -229,9 +232,12 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
         return -1;
     }
 
-    printf("Attempting to connect to %s:%hu (fd=%d)\n", inet_ntoa(ip_n),
-        ntohs(port_n), sock);
-
+    // We'll call bind on this socket
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int)) < 0) {
+        err_msg_errno(e, "begin_listen: setsockopt");
+        return -1;
+    }
+    
     if (fcntl(sock, F_SETFL, O_NONBLOCK) < 0) {
         err_msg_errno(e, "attempt_connect: set O_NONBLOCK failed");
         return -1;
@@ -239,11 +245,32 @@ int attempt_connect(struct in_addr ip_n, in_port_t port_n, ErrorStatus *e) {
 
     if (set_so_timeout(sock, e)) { return -1; }
 
+    // bind client side to the local address
+    // This is necessary because sometimes this gets assigned the IP address of
+    // the wrong interface. (No idea why that happens...)
+    memset(&clnt_addr, 0, sizeof(struct sockaddr_in));
+    clnt_addr.sin_family = AF_INET;
+    clnt_addr.sin_addr = clnt_ip;
+    clnt_addr.sin_port = 0; // any port
+
+    // bind to local address
+    if (bind(sock, (struct sockaddr *)(&clnt_addr),
+        sizeof(struct sockaddr_in)) < 0) {
+
+        err_msg_errno(e, "attempt_connect: bind");
+        return -1;
+    }
+
+    printf("Attempting to connect to %s:%hu (fd=%d)\n", inet_ntoa(serv_ip),
+        ntohs(serv_port), sock);
+
+    printf("    (bound to %s)\n", inet_ntoa(clnt_ip));
+
     // init serv_addr
     memset(&serv_addr, 0, sizeof(struct sockaddr_in));
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr = ip_n;
-    serv_addr.sin_port = port_n;
+    serv_addr.sin_addr = serv_ip;
+    serv_addr.sin_port = serv_port;
 
     // establish connection
     status = connect(sock, (struct sockaddr *)(&serv_addr),
@@ -550,38 +577,6 @@ static void copy_to_obuf(WriteBuf *buf, char *new, int len) {
 
 
 
-static void add_peer(ConnectivityState *state, int *p,
-    struct in_addr addr, struct in_addr this_dev) {
-
-    bool found = false;
-    for (int j = 0; j < *p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
-        if (addr.s_addr == state->peers[j].addr.s_addr) {
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        // Initialize PeerState object
-        state->peers[*p].addr = addr;
-        state->peers[*p].sock = -1; 
-        if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
-            state->peers[*p].sock_status = PSOCK_THIS_DEVICE;
-            state->this_peer_id = *p;
-            printf("this_peer_id = %d\n", *p);
-        }
-        else {
-            state->peers[*p].sock_status = PSOCK_INVALID;
-        }
-        obuf_reset(&state->peers[*p].obuf);
-        reset_pktreadbuf(&state->peers[*p].ibuf);
-
-
-        printf("Added peer %s\n", inet_ntoa(addr));
-        *p += 1;
-    }
-}
-
-
 
 /******************************************************************************
  * INITIALIZATION
@@ -664,7 +659,8 @@ static int connect_to_peers(ConnectivityState *state, struct pollfd fds[], Error
         // Don't connect if the "peer" is this device
         if (state->peers[i].sock_status == PSOCK_THIS_DEVICE) continue;
 
-        s = attempt_connect(state->peers[i].addr, htons(CF_PEER_LISTEN_PORT), e);
+        s = attempt_connect(state->peers[i].addr, htons(CF_PEER_LISTEN_PORT),
+            state->peers[state->this_dev_id].addr, e);
         if (s < 0) {
             err_show(e);
             // FIXME DO SOMETHING HERE...
@@ -675,6 +671,37 @@ static int connect_to_peers(ConnectivityState *state, struct pollfd fds[], Error
     }
 
     return 0;
+}
+
+static void add_peer(ConnectivityState *state, int *p,
+    struct in_addr addr, struct in_addr this_dev) {
+
+    bool found = false;
+    for (int j = 0; j < *p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
+        if (addr.s_addr == state->peers[j].addr.s_addr) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        // Initialize PeerState object
+        state->peers[*p].addr = addr;
+        state->peers[*p].sock = -1; 
+        if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
+            state->peers[*p].sock_status = PSOCK_THIS_DEVICE;
+            state->this_dev_id = *p;
+            printf("this_dev_id = %d\n", *p);
+        }
+        else {
+            state->peers[*p].sock_status = PSOCK_INVALID;
+        }
+        obuf_reset(&state->peers[*p].obuf);
+        reset_pktreadbuf(&state->peers[*p].ibuf);
+
+
+        printf("Added peer %s\n", inet_ntoa(addr));
+        *p += 1;
+    }
 }
 
 static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
@@ -713,6 +740,13 @@ static int init_connectivity_state(ConnectivityState *state,
         err_msg(e, "Loopback address conversion failed: inet_aton");
         return -1;
     }
+
+    // TODO [future work]: a failure to bind may mean the interface is down or
+    // has just been enabled, and the static IP address has not been
+    // established. Consider adding a loop to re-attempt binding (possibly with
+    // a delay/timer) until success. This should only be an issue for the peer
+    // listening socket because the user socket always binds to loopback, which
+    // doesn't depend on the wireless network interface.
 
     state->user_lsock = begin_listen(loopback,
         htons(CF_USER_LISTEN_PORT), e);
@@ -869,7 +903,8 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
 
         printf("timer expired %llu times\n", num_expir);
         // New attempt to connect to peer
-        s = attempt_connect(state->peers[i].addr, htons(CF_PEER_LISTEN_PORT), e);
+        s = attempt_connect(state->peers[i].addr, htons(CF_PEER_LISTEN_PORT),
+            state->peers[state->this_dev_id].addr, e);
         if (s < 0) {
             return -1;
             // TODO: set interval on timer to repeat (auto retry)
@@ -1217,9 +1252,13 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
     // - Server connects
     // - Server refuses connection
     assert(lc->clnt_id == peer_id); // Non-SFN case
-    sock = attempt_connect(state->peers[lc->serv_id].addr, lc->serv_port, e);
+    sock = attempt_connect(state->peers[lc->serv_id].addr, lc->serv_port,
+        state->peers[state->this_dev_id].addr, e);
     if (sock < 0) {
         // TODO: close LC
+        // Note: is this a recoverable error? Would it result from running
+        // conditions or a programming error? May just want to assert() and die
+        // on failure.
         return -1;
         // TODO: set interval on timer to repeat (auto retry)
     }
