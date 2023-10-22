@@ -904,6 +904,10 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
             state->peers[i].sock = s;
             state->peers[i].sock_status = PSOCK_WAITING;
         }
+        else {
+            state->peers[i].sock = -1;
+            state->peers[i].sock_status = PSOCK_INVALID;
+        }
         break;
 
     }
