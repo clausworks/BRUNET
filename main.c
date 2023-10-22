@@ -257,6 +257,8 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
     if (bind(sock, (struct sockaddr *)(&clnt_addr),
         sizeof(struct sockaddr_in)) < 0) {
 
+        close(sock);
+
         err_msg_errno(e, "attempt_connect: bind");
         return -1;
     }
@@ -663,7 +665,7 @@ static int connect_to_peers(ConnectivityState *state, struct pollfd fds[], Error
             state->peers[state->this_dev_id].addr, e);
         if (s < 0) {
             err_show(e);
-            // FIXME DO SOMETHING HERE...
+            continue; // try again later
         }
         fds[i + POLL_PSOCKS_OFF].events = POLLOUT;
         state->peers[i].sock = s;
@@ -907,7 +909,7 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
             state->peers[state->this_dev_id].addr, e);
         if (s < 0) {
             return -1;
-            // TODO: set interval on timer to repeat (auto retry)
+            // TODO: set timer again
         }
         close(state->peers[i].sock); // cancel timer
         // When connect succeeds, POLLOUT will be triggered.
