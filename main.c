@@ -261,6 +261,7 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
         // Acceptable if this fails. Failure to bind is not catastrophic.
 
         printf("attempt_connect: (warning) failed to bind to %s failed\n", inet_ntoa(clnt_ip));
+        perror("bind");
         // do nothing... see note right below
 
         //close(sock); // reenable after handling return value properly
