@@ -100,22 +100,25 @@ static void print_sock_info(int s) {
     }
 }
 
-static bool has_so_error(int sock, ErrorStatus *e) {
+static int has_so_error(int sock, ErrorStatus *e) {
     int so_error;
     socklen_t so_len = sizeof(int);
 
     if (getsockopt(sock, SOL_SOCKET, SO_ERROR,
         &so_error, &so_len) < 0) {
-        err_msg_errno(e, "getsockopt: POLLOUT");
-        return true;
+        err_msg_errno(e, "getsockopt: has_so_error");
+        err_show(e);
+        exit(EXIT_FAILURE);
     }
     if (so_error) {
         // TODO: interpret so_error (same as errno?)
-        err_msg(e, "SO_ERROR on user socket on POLLOUT\n");
-        return true;
+        errno = so_error;
+        perror("SO_ERROR on fd %d");
+        errno = 0;
+        return so_error;
     }
 
-    return false;
+    return 0;
 }
 
 static int set_so_nodelay(int sock, ErrorStatus *e) {
@@ -1107,8 +1110,15 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
         fds[peer_id + POLL_PSOCKS_OFF].events = POLLIN | POLLRDHUP | POLLOUT;
         break;
     case PSOCK_CONNECTED: // already connected
-        // TODO: algorithm to resolve conflicts
+        // TODO [future work]: this is an area where several race conditions
+        // coujld possible exist. It needs to be tested fully. The known
+        // problematic cases are the following:
+        // - A pair of peers attempt to connect to each other simultaneously,
+        // they both accept and mark the socket as PSOCK_CONNECTED before
+        // receiving notification that the other side also accepted. Upon
+        // receiving notifcation of this,j
         printf("Already connected to peer: closing sock %d\n", sock);
+        has_so_error(state->peers[peer_id].sock, e);
         close(sock);
         break;
     case PSOCK_THIS_DEVICE:
