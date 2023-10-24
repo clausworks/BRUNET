@@ -1,9 +1,9 @@
 table ip block_wlan0 {
-    chain output {
-        type filter hook output priority filter; policy accept;
-        meta oifname wlan0 counter drop
-    }
-    chain input {
+    #chain postrouting {
+        #type filter hook output priority filter; policy accept;
+        #meta oifname wlan0 counter drop
+    #}
+    chain prerouting {
         type filter hook input priority filter; policy accept;
         meta iifname wlan0 counter drop
     }
