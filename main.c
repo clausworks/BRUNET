@@ -1099,8 +1099,12 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
     // a) It's actually a timer fd. Cancel it.
     // TODO finish description?
     switch (state->peers[peer_id].sock_status) {
+    case PSOCK_CONNECTED:
+        // TODO: cleanup obuf etc. before closing socket
+        printf("stub: cleanup obuf before close...\n");
     case PSOCK_WAITING: // timerfd
     case PSOCK_CONNECTING: // not yet connected
+    // Already connected. See note below at old handler for this
         close(state->peers[peer_id].sock);
         // (no break)
     case PSOCK_INVALID: // never initialized
@@ -1109,18 +1113,20 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
         // enable pollout so any data waiting gets sent
         fds[peer_id + POLL_PSOCKS_OFF].events = POLLIN | POLLRDHUP | POLLOUT;
         break;
-    case PSOCK_CONNECTED: // already connected
-        // TODO [future work]: this is an area where several race conditions
-        // coujld possible exist. It needs to be tested fully. The known
-        // problematic cases are the following:
+    //case PSOCK_CONNECTED: // already connected
+        // TODO [future work]: this is an area highly likely to contain bugs.
+        // The following describes known bugs and fixes:
         // - A pair of peers attempt to connect to each other simultaneously,
         // they both accept and mark the socket as PSOCK_CONNECTED before
         // receiving notification that the other side also accepted. Upon
-        // receiving notifcation of this,j
-        printf("Already connected to peer: closing sock %d\n", sock);
-        has_so_error(state->peers[peer_id].sock, e);
-        close(sock);
-        break;
+        // receiving notifcation of this, they both close the "old" socket, thus
+        // triggering an infinite loop of reconnection attempts. This was solved
+        // by only allowing the machine with the lower peer_id to attempt a
+        // reconnection.
+        //printf("Already connected to peer: closing sock %d\n", sock);
+        //has_so_error(state->peers[peer_id].sock, e);
+        //close(sock);
+        //break;
     case PSOCK_THIS_DEVICE:
         assert(state->peers[peer_id].sock_status != PSOCK_THIS_DEVICE);
         //err_msg(e, "peer connection from this device");
