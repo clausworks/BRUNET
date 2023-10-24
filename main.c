@@ -1104,7 +1104,7 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
         state->peers[peer_id].sock = sock;
         state->peers[peer_id].sock_status = PSOCK_CONNECTED;
         // enable pollout so any data waiting gets sent
-        fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+        fds[peer_id + POLL_PSOCKS_OFF].events = POLLIN | POLLRDHUP | POLLOUT;
         break;
     case PSOCK_CONNECTED: // already connected
         // TODO: algorithm to resolve conflicts
