@@ -1,5 +1,3 @@
-# echo-server.py
-
 import socket
 import sys
 
@@ -11,10 +9,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.listen()
     conn, addr = s.accept()
     with conn:
-        print(f"Connected by {addr}")
         while True:
             data = conn.recv(1024)
             sys.stdout.buffer.write(data);
             if not data:
                 break
-            #conn.sendall(data)
