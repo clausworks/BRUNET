@@ -1978,7 +1978,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     // This should always succeed, since paylen <= readlen
                     hdr.off = cachefile_get_read(f, peer_id);
                     assert(paylen == cachefile_read(f, peer_id, buf, paylen, e));
-                    printf("cachefile_get_read [src]: %llu\n", cachefile_get_ack(f));
+                    printf("cachefile_get_read [src]: %llu\n",
+                    cachefile_get_read(f, peer_id));
 
                     hdr.len = paylen; // payload length
 
@@ -2185,7 +2186,8 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     if (nbytes > 0) {
         // Read that number of bytes
         assert(nbytes == cachefile_read(cache, this_id, buf, nbytes, e));
-        printf("cachefile_get_read [dst]: %llu\n", cachefile_get_ack(cache));
+        printf("cachefile_get_read [dst]: %llu\n", cachefile_get_read(cache,
+            this_id));
 
         // Schedule ack packet
         if (fdtype == FDTYPE_USERSERV) {
