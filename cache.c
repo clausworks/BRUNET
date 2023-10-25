@@ -518,29 +518,28 @@ static int _create_file(char *fname, ErrorStatus *e) {
  */
 int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
     // Create a new cache files for a connection (fwd, bkwd)
-    char fname[CACHE_FNAME_SIZE];
     CacheFileHeader *f;
     unsigned mmap_len;
+
+    // TODO [future work]: use O_TMPFILE instead of named files
 
     assert(_global_cache_init == true);
 
     memset(cache, 0, sizeof(Cache));
 
-    // TODO: try O_TMPFILE
-
     // FORWARD DIRECTION
-    if (_gen_fname(lc_id, fname, "fwd", e) < 0) {
+    if (_gen_fname(lc_id, cache->fwd.fname, "fwd", e) < 0) {
         err_msg_prepend(e, "fname fwd: ");
         return -1;
     }
-    cache->fwd.fd = _create_file(fname, e);
+    cache->fwd.fd = _create_file(cache->fwd.fname, e);
     if (cache->fwd.fd < 0) { return -1; }
     // BACKWARD DIRECTION
-    if (_gen_fname(lc_id, fname, "bkwd", e) < 0) {
+    if (_gen_fname(lc_id, cache->bkwd.fname, "bkwd", e) < 0) {
         err_msg_prepend(e, "fname bkwd: ");
         return -1;
     }
-    cache->bkwd.fd = _create_file(fname, e);
+    cache->bkwd.fd = _create_file(cache->bkwd.fname, e);
     if (cache->bkwd.fd < 0) { return -1; }
 
     mmap_len = CACHE_DEFAULT_PAGES * _page_bytes;
@@ -571,17 +570,30 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
 int cache_close(Cache *cache, ErrorStatus *e) {
     int status;
     status = munmap(cache->fwd.hdr_base, cache->fwd.mmap_len);
+    status = munmap(cache->bkwd.hdr_base, cache->bkwd.mmap_len);
+    
+    // Forward
     if (status < 0) {
         err_msg_errno(e, "munmap fwd");
         return -1;
     }
-    status = munmap(cache->bkwd.hdr_base, cache->bkwd.mmap_len);
+    close(cache->fwd.fd);
+    if (unlink(cache->fwd.fname) != 0) {
+        err_msg_errno(e, "unlink: ");
+        return -1;
+    }
+
+    // Backward
     if (status < 0) {
         err_msg_errno(e, "munmap bkwd");
         return -1;
     }
-    close(cache->fwd.fd);
     close(cache->bkwd.fd);
+    if (unlink(cache->bkwd.fname) != 0) {
+        err_msg_errno(e, "unlink");
+        return -1;
+    }
+
     // Cleanup to trigger error on accidental reuse
     memset(cache, 0, sizeof(Cache));
     cache->fwd.fd = -1;

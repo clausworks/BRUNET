@@ -36,6 +36,7 @@ typedef struct {
     int fd;
     CacheFileHeader *hdr_base;
     long long mmap_len;
+    char fname[CACHE_FNAME_SIZE];
 } OpenCacheFile;
 
 typedef struct {
