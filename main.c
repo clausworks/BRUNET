@@ -1445,7 +1445,7 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     assert(last_acked < hdr->off); // non-SFN only
     cachefile_ack(f, hdr->off - last_acked);
 
-    if (lc->pending_cmd[peer_id] == PEND_LC_CLOSE) {
+    if (lc->pending_cmd[peer_id] == PEND_LC_WILLCLOSE) {
         if (cachefile_get_unacked(f) == 0) {
             // This should trigger the LC_CLOSE packet
             printf("Enabling POLLOUT for LC_CLOSE\n");
@@ -1717,7 +1717,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
             }
             cache_hdr = lc->cache.bkwd.hdr_base;
             peer_id = lc->clnt_id;
-            printf("Writing to cache file: bkwd");
+            printf("Writing to cache file: bkwd\n");
             break;
         case FDTYPE_USERCLNT:
             user_id = fd_i - POLL_UCSOCKS_OFF;
@@ -1729,7 +1729,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
             }
             cache_hdr = lc->cache.fwd.hdr_base;
             peer_id = lc->serv_id;
-            printf("Writing to cache file: fwd");
+            printf("Writing to cache file: fwd\n");
             break;
         default:
             assert(0); // should never get here
