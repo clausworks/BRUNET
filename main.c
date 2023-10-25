@@ -468,6 +468,14 @@ static int obuf_get_unacked(WriteBuf *buf) {
     }
 }
 
+/* This function should be called after obuf_update_ack right before a socket is
+ * closed (due to POLLHUP or similar). This ensures the relative ack_increment
+ * value is accurate when obuf_update_ack is called again on a new socket.
+ */
+static void obuf_close_cleanup(WriteBuf *buf) {
+    buf->last_acked = 0;
+}
+
 /* Calculates the number of bytes acknowledged by TCP on the given socket and
  * updates the buffer's internal ack pointer accordingly. This frees up space in
  * the buffer for additional writes.
@@ -502,6 +510,8 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
 
     buf->a = (buf->a + ack_increment) % buf->len;
     buf->last_acked += ack_increment;
+
+    printf("obuf_update_ack: a=%u, delta=%llu\n", buf->a, ack_increment);
 
     return (int)(ack_increment);
 }
@@ -1101,7 +1111,9 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
     switch (state->peers[peer_id].sock_status) {
     case PSOCK_CONNECTED:
         // TODO: cleanup obuf etc. before closing socket
-        printf("stub: cleanup obuf before close...\n");
+        printf("cleanup obuf before close...\n");
+        obuf_update_ack(&state->peers[peer_id].obuf, state->peers[peer_id].sock, e);
+        obuf_close_cleanup(&state->peers[peer_id].obuf);
     case PSOCK_WAITING: // timerfd
     case PSOCK_CONNECTING: // not yet connected
     // Already connected. See note below at old handler for this
