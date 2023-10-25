@@ -1414,7 +1414,13 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
         assert(0);
     }
 
-    return cachefile_write(f, payload, hdr->len, e);
+    if (cachefile_write(f, payload, hdr->len, e) < 0) {
+        return -1;
+    }
+    else {
+        printf("cachefile_get_write [dst]: %llu\n", cachefile_get_write(f));
+        return 0;
+    }
 }
 
 static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
@@ -1742,7 +1748,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     if (cachefile_write(cache_hdr, buf, read_len, e) < 0) {
         return -1;
     }
-    printf("cachefile_get_write: %llu\n", cachefile_get_write(cache_hdr));
+    printf("cachefile_get_write [src]: %llu\n", cachefile_get_write(cache_hdr));
 
     // Trigger pollout on destination socket (non-SFN)
     fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
