@@ -470,10 +470,13 @@ static int obuf_get_unacked(WriteBuf *buf) {
 
 /* This function should be called after obuf_update_ack right before a socket is
  * closed (due to POLLHUP or similar). This ensures the relative ack_increment
- * value is accurate when obuf_update_ack is called again on a new socket.
+ * value is accurate when obuf_update_ack is called again on a new socket. It
+ * also ensures that all unacked data will be resent.
  */
 static void obuf_close_cleanup(WriteBuf *buf) {
     buf->last_acked = 0;
+    buf->r = buf->a;
+    printf("obuf_close_cleanup: %d unacked bytes", obuf_get_unacked(buf));
 }
 
 /* Calculates the number of bytes acknowledged by TCP on the given socket and
