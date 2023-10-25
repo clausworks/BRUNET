@@ -622,7 +622,7 @@ static void copy_to_obuf(WriteBuf *buf, char *new, int len) {
     buf->w = (buf->w + len) % buf->len;
     assert(buf->w != buf->a);
 
-    hex_dump("copy_to_obuf", new, len, 16);
+    //hex_dump("copy_to_obuf", new, len, 16);
 }
 
 
@@ -1444,6 +1444,7 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     last_acked = cachefile_get_ack(f);
     assert(last_acked < hdr->off); // non-SFN only
     cachefile_ack(f, hdr->off - last_acked);
+    printf("cachefile_get_ack: %llu\n", cachefile_get_ack(f));
 
     if (lc->pending_cmd[peer_id] == PEND_LC_WILLCLOSE) {
         if (cachefile_get_unacked(f) == 0) {
@@ -1553,7 +1554,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
 
         read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
         printf("%d bytes read, %d attempted (fd %d)\n", read_len, nbytes, fds[fd_i].fd);
-        hex_dump(NULL, buf->buf + buf->w, read_len, 16);
+        //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
         buf->w += nbytes; // TODO: is this correct? should it be read_len?
 
 
@@ -1740,6 +1741,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     if (cachefile_write(cache_hdr, buf, read_len, e) < 0) {
         return -1;
     }
+    printf("cachefile_get_write: %llu\n", cachefile_get_write(cache_hdr));
 
     // Trigger pollout on destination socket (non-SFN)
     fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
