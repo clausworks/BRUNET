@@ -103,6 +103,8 @@ typedef struct {
 #define LC_ID_INSTBITS (LC_ID_BITS - LC_ID_PEERBITS)
 //#define MAX_USERCLNT_CONNS_LIFETIME (1 << 
 
+#define PEER_SYNC_LEN (sizeof(long long unsigned))
+
 #define TFD_LEN_SEC 5
 
 
@@ -138,7 +140,8 @@ typedef struct {
     int r;
     int w;
     int a;
-    long long last_acked;
+    unsigned long long last_acked;
+    unsigned long long total_acked;
     struct iovec vecbuf[2];
 } WriteBuf;
 
@@ -146,6 +149,7 @@ typedef struct {
     char buf[PEER_BUF_LEN];
     int len;
     int w;
+    unsigned long long total_read; // ideally, matches obuf.last_acked
 } PktReadBuf;
 
 /* Peer: a device on the network running this software */
@@ -156,7 +160,10 @@ typedef struct {
     dictiter_t lc_iter;
     WriteBuf obuf;
     PktReadBuf ibuf;
+    bool sync_received;
+    bool sync_sent;
 } PeerState;
+// TODO: make sync_* part of sock_status (e.g. PSOCK_SYNCING)
 
 /* User connection: a TCP connection to a local user program */
 typedef struct {

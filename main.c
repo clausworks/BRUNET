@@ -428,15 +428,21 @@ int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) {
  * READ/WRITE BUFFER FUNCTIONS 
  */
 
-static void reset_pktreadbuf(PktReadBuf *rbuf) {
+static void ibuf_init(PktReadBuf *rbuf) {
     memset(rbuf, 0, sizeof(PktReadBuf));
     rbuf->len = PEER_BUF_LEN;
+}
+
+/* Just clears the buffer and resets the write head.
+ */
+static void ibuf_clear(PktReadBuf *rbuf) {
+    memset(rbuf->buf, 0, rbuf->len);
+    rbuf->w = 0;
 }
 
 static void obuf_reset(WriteBuf *wbuf) {
     memset(wbuf, 0, sizeof(WriteBuf));
     wbuf->len = PEER_BUF_LEN;
-    wbuf->last_acked = 0;
 }
 
 static int obuf_get_empty(WriteBuf *buf) {
@@ -489,23 +495,30 @@ static void obuf_close_cleanup(WriteBuf *buf) {
  * ack status unless the associated output buffer delivers raw bytes to the
  * stream's destination.
  */
-static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
+static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStatus *e) {
     long long unsigned current_acked;
     long long unsigned ack_increment;
+    int prelude, n;
 
     if (bytes_acked(sock, &current_acked, e) < 0) {
         err_msg_prepend(e, "obuf_update_ack: ");
         return -1;
     }
 
-    // TODO: on connection reset, set buf->last_acked to 0
-
+    assert(current_acked >= buf->last_acked);
     ack_increment = current_acked - buf->last_acked;
+    if (ack_increment == 0) {
+        return 0;
+    }
     
-    // Subtract handshake byte (only once)
-    if (buf->last_acked == 0 && current_acked >= 1) {
-        ack_increment -= 1;
-        buf->last_acked += 1;
+    // Subtract handshake byte and peer sync bytes
+    prelude = (is_peer_sock) ? 1+PEER_SYNC_LEN : 1;
+    if (buf->last_acked < prelude) {
+        prelude -= buf->last_acked;
+        n = (prelude < ack_increment) ? prelude : ack_increment;
+        ack_increment -= n;
+        buf->last_acked += n;
+        buf->total_acked += n;
     }
 
     // Ensures ack_increment can fit in an int32_t value
@@ -513,8 +526,9 @@ static int obuf_update_ack(WriteBuf *buf, int sock, ErrorStatus *e) {
 
     buf->a = (buf->a + ack_increment) % buf->len;
     buf->last_acked += ack_increment;
+    buf->total_acked += ack_increment;
 
-    printf("obuf_update_ack: a=%u, delta=%llu\n", buf->a, ack_increment);
+    printf("obuf_update_ack: a=%u, delta=%llu, n=%d\n", buf->a, ack_increment, n);
 
     return (int)(ack_increment);
 }
@@ -557,7 +571,7 @@ static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
 
     // Perform write
     n_written = writev(sock, buf->vecbuf, n_seqs);
-    printf("write to peer: %d bytes\n", n_written);
+    printf("write to fd %d: %d bytes\n", sock, n_written);
     //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
     if (n_written == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -726,7 +740,7 @@ static void add_peer(ConnectivityState *state, int *p,
             state->peers[*p].sock_status = PSOCK_INVALID;
         }
         obuf_reset(&state->peers[*p].obuf);
-        reset_pktreadbuf(&state->peers[*p].ibuf);
+        ibuf_init(&state->peers[*p].ibuf);
 
 
         printf("Added peer %s\n", inet_ntoa(addr));
@@ -906,7 +920,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         // the system are symmetric, this is good enough.
         i = fd_i - POLL_PSOCKS_OFF;
         // BEFORE closing, we need to prepare the obuf for a reconnect
-        obuf_update_ack(&state->peers[i].obuf, fds[fd_i].fd, e);
+        obuf_update_ack(&state->peers[i].obuf, fds[fd_i].fd, true, e);
         obuf_close_cleanup(&state->peers[i].obuf);
 
         close(fds[fd_i].fd); // close disconnected socket
@@ -1110,24 +1124,27 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
 
     // Check status of existing socket:
     // a) It's actually a timer fd. Cancel it.
-    // TODO finish description?
+    // TODO finish description
     switch (state->peers[peer_id].sock_status) {
+
     case PSOCK_CONNECTED:
-        // TODO: cleanup obuf etc. before closing socket
         printf("cleanup obuf before close...\n");
-        obuf_update_ack(&state->peers[peer_id].obuf, state->peers[peer_id].sock, e);
+        obuf_update_ack(&state->peers[peer_id].obuf,
+            state->peers[peer_id].sock, true, e);
         obuf_close_cleanup(&state->peers[peer_id].obuf);
+
     case PSOCK_WAITING: // timerfd
+
     case PSOCK_CONNECTING: // not yet connected
-    // Already connected. See note below at old handler for this
         close(state->peers[peer_id].sock);
-        // (no break)
+
     case PSOCK_INVALID: // never initialized
         state->peers[peer_id].sock = sock;
         state->peers[peer_id].sock_status = PSOCK_CONNECTED;
         // enable pollout so any data waiting gets sent
         fds[peer_id + POLL_PSOCKS_OFF].events = POLLIN | POLLRDHUP | POLLOUT;
         break;
+
     //case PSOCK_CONNECTED: // already connected
         // TODO [future work]: this is an area highly likely to contain bugs.
         // The following describes known bugs and fixes:
@@ -1142,6 +1159,7 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
         //has_so_error(state->peers[peer_id].sock, e);
         //close(sock);
         //break;
+
     case PSOCK_THIS_DEVICE:
         assert(state->peers[peer_id].sock_status != PSOCK_THIS_DEVICE);
         //err_msg(e, "peer connection from this device");
@@ -1522,7 +1540,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
         printf("%d bytes read, %d attempted (fd %d)\n", read_len, nbytes, fds[fd_i].fd);
         hex_dump(NULL, buf->buf + buf->w, read_len, 16);
-        buf->w += nbytes;
+        buf->w += nbytes; // TODO: is this correct? should it be read_len?
 
 
         // EOF
@@ -1546,27 +1564,58 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         }
         // Incomplete
         else if (read_len < nbytes) {
+            buf->total_read += read_len;
             printf("Incomplete packet\n");
             return 0; // finish read on next run
         }
-
         // Complete
+        else {
+            buf->total_read += read_len;
+        }
+
+        // Finished reading entire packet?
         if (hdr != NULL) {
-            // Finished reading entire packet
-            break;
+            break; // done
         }
     }
 
     // Have full packet
     printf("Processing packet...\n");
     if (process_packet(state, fds, fd_i, e) < 0) {
-        reset_pktreadbuf(buf);
+        ibuf_clear(buf);
         return -1;
     }
     else {
-        reset_pktreadbuf(buf);
+        ibuf_clear(buf);
         return 0;
     }
+}
+
+/* TODO [future work]: This is the buggy counterpart to send_peer_sync. It makes
+ * the same lousy assumptions as that function. See the comments over there for
+ * more details.
+ */
+static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
+    long long unsigned diff;
+    long long unsigned peer_total_read;
+    int n_read = read(peer->sock, &peer_total_read, PEER_SYNC_LEN);
+    assert(n_read == PEER_SYNC_LEN);
+
+    // In an ideal world, these should be equal. However, some acks can get lost
+    // as the connection is disrupted, which is why we have to worry about this
+    // whole sync thing instead of just relying on TCP's acks when a connection
+    // closes.
+    // TODO [future work] This could be tested by adding a sleep in here...
+    assert(peer_total_read >= peer->obuf.total_acked);
+    diff = peer_total_read - peer->obuf.total_acked;
+
+    peer->obuf.a = (peer->obuf.a + diff) % peer->obuf.len;
+    peer->obuf.r = peer->obuf.a;
+
+    peer->sync_received = true;
+    printf("Sync received for fd %d (delta=%llu)\n", peer->sock, diff);
+
+    return 0;
 }
 
 static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
@@ -1577,7 +1626,15 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
 
     switch (state->peers[i].sock_status) {
     case PSOCK_CONNECTED: // already connected, data to write
-        return receive_packet(state, fds, fd_i, e);
+        // Perform sync before receiving any new data
+        if (state->peers[i].sync_received) {
+            receive_packet(state, fds, fd_i, e);
+        }
+        else {
+            // TODO [future work]: handle return value & fix cheap hack.
+            // See comments for receive_peer_sync.
+            receive_peer_sync(&state->peers[i], e);
+        }
         break;
     case PSOCK_CONNECTING: // was connecting
     case PSOCK_WAITING:
@@ -1705,6 +1762,38 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
+/* This should only be called after a POLLOUT event on a newly established
+ * connection to a peer.
+ *
+ * This function writes the total number of bytes read via the input buffer over
+ * the lifetime of the program. This allows the peer to update its obuf read/ack
+ * heads.
+ *
+ * TODO [future work]: this function makes certain unsafe assumptions (and these
+ * probably won't cause bugs later, right?). Namely: because this is a brand new
+ * connection, we assume that the TCP output buffer will be empty, so we can
+ * always write a 64-bit integer to it without write returning less than the
+ * proper number of bytes. Of course, a signal could occur, or we could end up
+ * with EAGAIN. However, these are probably unlikely given the circumstances.
+ *
+ * The next person to work on this should immediately implement some sort of
+ * output buffer (like WriteBuf, but simpler) to repeatedly call write on
+ * POLLOUT until all the bytes have been written, and of course handle errors
+ * (e.g. EAGAIN) nicely.
+ */
+static int send_peer_sync(PeerState *peer, ErrorStatus *e) {
+    char output[sizeof(unsigned long long)];
+    int n_written;
+
+    memcpy(output, &peer->ibuf.total_read, sizeof(unsigned long long));
+    n_written = write(peer->sock, output, sizeof(unsigned long long));
+    assert(n_written == sizeof(unsigned long long));
+    peer->sync_sent = true;
+
+    printf("Sync sent for fd %d\n", peer->sock);
+    return 0;
+}
+
 static int send_packet(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -1723,7 +1812,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     }
 
     // Update obuf ack counter
-    if (obuf_update_ack(&peer->obuf, peer->sock, e) < 0) {
+    if (obuf_update_ack(&peer->obuf, peer->sock, true, e) < 0) {
         err_msg_prepend(e, "send_packet: ");
         return -1;
     }
@@ -2023,7 +2112,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     }*/
 
     // Free up buffer space
-    if (obuf_update_ack(obuf, fds[fd_i].fd, e) < 0) {
+    if (obuf_update_ack(obuf, fds[fd_i].fd, false, e) < 0) {
         err_msg_prepend(e, "write_to_user_sock: ");
         return -1;
     }
@@ -2160,6 +2249,12 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
     return 0;
 }
 
+/* We can get here any time POLLOUT is enabled. This can happen in a number of
+ * ways:
+ * - This node is the server, and this socket is a newly accepted connection
+ * - This node is the client, and the nonblocking connect just completed
+ * - The last time data was sent, there was still some remaining
+ */
 static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
@@ -2176,9 +2271,23 @@ static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
         break;
     case PSOCK_CONNECTED: // already connected, data to write
         printf("handle_pollout_peer: PSOCK_CONNECTED\n");
-        if (send_packet(state, fds, fd_i, e) < 0) {
-            err_msg_prepend(e, "handle_pollout_peer: ");
-            return -1;
+        // Send sync before resuming (or starting) data transmission
+        if (!state->peers[i].sync_sent) {
+            // TODO: cheap hack -- read comments at definition of sync_peers
+            // Also, (future work) handle the return value after fixing said
+            // issues.
+            send_peer_sync(&state->peers[i], e);
+        }
+        // Also, we need to wait till we've received the sync before sending any
+        // new packets.
+        else if (state->peers[i].sync_received) {
+            if (send_packet(state, fds, fd_i, e) < 0) {
+                err_msg_prepend(e, "handle_pollout_peer: ");
+                return -1;
+            }
+        }
+        else {
+            printf("Sync sent, waiting to receive\n");
         }
         break;
     case PSOCK_WAITING:
