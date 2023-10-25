@@ -1704,7 +1704,8 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
         }
     }
     // Normal
-    printf("%d bytes read: [%s]\n", read_len, buf);
+    //printf("%d bytes read: [%s]\n", read_len, buf);
+    printf("%d bytes read\n", read_len);
 
     // Get direction
     switch (get_fd_type(state, fd_i)) {
