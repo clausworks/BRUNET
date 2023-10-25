@@ -851,31 +851,28 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     LogConn *lc;
 
     // Close socket
-    close(fds[fd_i].fd);
-    printf("Closed socket (fd=%d)\n", fds[fd_i].fd);
+    printf("Closing socket (fd=%d)\n", fds[fd_i].fd);
 
     switch (get_fd_type(state, fd_i)) {
 
     case FDTYPE_LISTEN:
         // fatal error
+        close(fds[fd_i].fd);
         err_msg(e, "listening socket failed");
         return -1;
 
     case FDTYPE_TIMER:
         // fatal error
+        close(fds[fd_i].fd);
         err_msg(e, "timer fd failed");
         return -1;
 
     case FDTYPE_USERCLNT:
+        close(fds[fd_i].fd); // close disconnected socket
         i = fd_i - POLL_UCSOCKS_OFF;
         state->user_clnt_conns[i].sock = -1;
-
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
-        /*if (lc == NULL) {
-            err_msg_prepend(e, "handle_disconnect: ");
-            return -1;
-        }*/
         // Note on pending command: This will overwrite the previous command. It
         // is not possible for the previous command to be PEND_LC_NEW because
         // that is cleared as soon as the packet is generated. If the previous
@@ -888,15 +885,12 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         break;
 
     case FDTYPE_USERSERV:
+        close(fds[fd_i].fd); // close disconnected socket
         i = fd_i - POLL_USSOCKS_OFF;
         state->user_serv_conns[i].sock = -1;
         state->user_serv_conns[i].sock_status = USSOCK_INVALID;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
-        /*if (lc == NULL) {
-            err_msg_prepend(e, "handle_disconnect: ");
-            return -1;
-        }*/
         lc->pending_cmd[lc->clnt_id] = PEND_LC_WILLCLOSE;
         // TODO [future work]: apply pending command to all peers for
         // store-forward case.
@@ -911,6 +905,12 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         // probably a better way to do this, but since we assume the devices in
         // the system are symmetric, this is good enough.
         i = fd_i - POLL_PSOCKS_OFF;
+        // BEFORE closing, we need to prepare the obuf for a reconnect
+        obuf_update_ack(&state->peers[i].obuf, fds[fd_i].fd, e);
+        obuf_close_cleanup(&state->peers[i].obuf);
+
+        close(fds[fd_i].fd); // close disconnected socket
+
         assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
         // TODO: attempt reconnect immediately
         if (state->this_dev_id < i) {
