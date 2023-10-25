@@ -1931,8 +1931,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // PACKET: DATA PACKET
             if (lc->pending_data[peer_id] == PEND_DATA) {
                 char buf[PKT_MAX_PAYLOAD_LEN];
-                int paylen;
-                int obuf_empty;
+                long long unsigned paylen;
+                long long unsigned obuf_empty;
                 CacheFileHeader *f;
 
                 assert(lc->pending_cmd[peer_id] != PEND_LC_NEW);
@@ -1964,6 +1964,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
                     // Get avail. num bytes in cache
                     paylen = cachefile_get_readlen(f, peer_id);
+                    printf("cachefile_get_readlen: %llu\n", paylen);
                     if (PKT_MAX_PAYLOAD_LEN < paylen) {
                         paylen = PKT_MAX_PAYLOAD_LEN;
                         trigger_again = true;
@@ -2117,8 +2118,8 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     int fd_i, FDType fdtype, ErrorStatus *e) {
     
     char buf[PKT_MAX_PAYLOAD_LEN];
-    int nbytes;
-    int obuf_empty;
+    unsigned long long nbytes;
+    unsigned long long obuf_empty;
     WriteBuf *obuf;
     unsigned usock_idx, this_id;
     unsigned lc_id;
@@ -2172,6 +2173,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     // Find how much we can write
     nbytes = cachefile_get_readlen(cache, this_id);
+    printf("cachefile_get_readlen: %llu\n", nbytes);
     if (PKT_MAX_PAYLOAD_LEN < nbytes) {
         nbytes = PKT_MAX_PAYLOAD_LEN;
         unread_data = true;
