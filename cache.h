@@ -53,6 +53,7 @@ void cachefile_ack(CacheFileHeader *f, long long);
 unsigned long long cachefile_get_readlen(CacheFileHeader *f, int);
 unsigned long long cachefile_get_read(CacheFileHeader *f, int);
 unsigned long long cachefile_get_ack(CacheFileHeader *f);
+unsigned long long cachefile_get_unacked(CacheFileHeader *f);
 unsigned long long cachefile_get_write(CacheFileHeader *f);
 
 #ifdef __TEST

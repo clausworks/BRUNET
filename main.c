@@ -1979,12 +1979,24 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 }
             }
 
-            // To close, we PEND_LC_WILLCLOSE must be set for the LC, and we
-            // need to have no data pending on the output stream
+            // To close, PEND_LC_WILLCLOSE must be set for the LC, and we need
+            // to have no data pending on the output stream.
+            // TODO: ensure POLLOUT will be triggereed for LC_CLOSE when needed.
             if (lc->pending_cmd[peer_id] == PEND_LC_WILLCLOSE
                 && lc->pending_data[peer_id] == PEND_NODATA) {
+                CacheFileHeader *f;
 
-                lc->pending_cmd[peer_id] = PEND_LC_CLOSE;
+                // Check to see if any data needs to be acked
+                if (lc->serv_id == peer_id) {
+                    f = lc->cache.fwd.hdr_base;
+                }
+                else if (lc->clnt_id == peer_id) {
+                    f = lc->cache.bkwd.hdr_base;
+                }
+
+                if (cachefile_get_unacked(f) == 0) {
+                    lc->pending_cmd[peer_id] = PEND_LC_CLOSE;
+                }
             }
 
             // PACKET: LC_CLOSE
@@ -1992,6 +2004,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // Turn off PEND_DATA elsewhere?
             // note - pending data only applies to outgoing data. It should
             // remain on until all data from the socket has been sent.
+            // Update: we actually need to wait till all data has been sent AND
+            // acked.
             if (lc->pending_cmd[peer_id] == PEND_LC_CLOSE) {
                 pktlen = sizeof(PktHdr);
 

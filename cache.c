@@ -448,6 +448,13 @@ unsigned long long cachefile_get_readlen(CacheFileHeader *f, int peer_id) {
     return f->logical_write - f->logical_read[peer_id];
 }
 
+/* Return the number of unacked bytes, including bytes that have not been read
+ * from the file (i.e. bytes cached but not sent to a peer).
+ */
+unsigned long long cachefile_get_unacked(CacheFileHeader *f) {
+    return f->logical_write - f->logical_ack;
+}
+
 unsigned long long cachefile_get_read(CacheFileHeader *f, int peer_id) {
     return f->logical_read[peer_id];
 }
