@@ -533,7 +533,8 @@ static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStat
     buf->last_acked += ack_increment;
     buf->total_acked += ack_increment;
 
-    printf("obuf_update_ack: a=%u, delta=%llu, n=%llu\n", buf->a, ack_increment, n);
+    printf("obuf_update_ack: a=%u, delta=%llu, total=%llu\n", buf->a,
+        ack_increment, buf->total_acked);
 
     return (int)(ack_increment);
 }
