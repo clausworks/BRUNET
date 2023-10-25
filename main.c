@@ -1833,8 +1833,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // PACKET: LC_NEW
             if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
                 // Copy to output buf only if there's enough space
-                pktlen = sizeof(PktHdr) + sizeof(LogConn);
-                if (obuf_get_empty(&peer->obuf) > pktlen) {
+                pktlen = sizeof(PktHdr) + sizeof(LogConnPkt);
+                if (obuf_get_empty(&peer->obuf) >= pktlen) {
                     //char fakebuf[1024];
                     PktHdr hdr = {
                         .type = PKTTYPE_LC_NEW,
@@ -1868,7 +1868,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             if (lc->pending_cmd[peer_id] == PEND_LC_ACK) {
                 pktlen = sizeof(PktHdr);
 
-                if (obuf_get_empty(&peer->obuf) > pktlen) {
+                if (obuf_get_empty(&peer->obuf) >= pktlen) {
                     CacheFileHeader *f;
                     PktHdr hdr = {
                         .type = PKTTYPE_LC_ACK,
@@ -1914,7 +1914,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // PACKET: DATA PACKET
             if (lc->pending_data[peer_id] == PEND_DATA) {
                 char buf[PKT_MAX_PAYLOAD_LEN];
-                int nbytes, obuf_empty;
+                int paylen;
+                int obuf_empty;
                 CacheFileHeader *f;
 
                 assert(lc->pending_cmd[peer_id] != PEND_LC_NEW);
@@ -1922,7 +1923,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 pktlen = sizeof(PktHdr) + 1; // minimum packet size
 
                 obuf_empty = obuf_get_empty(&peer->obuf);
-                if (obuf_empty > pktlen) {
+                if (obuf_empty >= pktlen) {
                     PktHdr hdr = {
                         .type = PKTTYPE_DATA,
                         .lc_id = lc->id,
@@ -1944,25 +1945,28 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         assert(0); // Should not reach in non-SFN case
                     }
 
-                    // Read payload into temporary buffer
-                    nbytes = cachefile_get_readlen(f, peer_id);
-                    if (PKT_MAX_PAYLOAD_LEN < nbytes) {
-                        nbytes = PKT_MAX_PAYLOAD_LEN;
+                    // Get avail. num bytes in cache
+                    paylen = cachefile_get_readlen(f, peer_id);
+                    if (PKT_MAX_PAYLOAD_LEN < paylen) {
+                        paylen = PKT_MAX_PAYLOAD_LEN;
                         trigger_again = true;
                     }
-                    if (obuf_empty < nbytes) {
-                        nbytes = obuf_empty;
+                    // Check total packet size
+                    // Note: we know paylen will be positive because obuf_empty
+                    // is at least the header length + 1.
+                    if (obuf_empty < paylen + sizeof(PktHdr)) {
+                        paylen = obuf_empty - sizeof(PktHdr);
                         trigger_again = true;
                     }
-                    // This should always succeed, since nbytes <= readlen
+                    // This should always succeed, since paylen <= readlen
                     hdr.off = cachefile_get_read(f, peer_id);
-                    assert(nbytes == cachefile_read(f, peer_id, buf, nbytes, e));
+                    assert(paylen == cachefile_read(f, peer_id, buf, paylen, e));
 
-                    hdr.len = nbytes; // payload length
+                    hdr.len = paylen; // payload length
 
                     // Copy header, payload to output buffer
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
-                    copy_to_obuf(&peer->obuf, buf, nbytes);
+                    copy_to_obuf(&peer->obuf, buf, paylen);
 
                     if (trigger_again) {
                         // re-enabled pollout
@@ -1993,7 +1997,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
                 assert(lc->pending_data[peer_id] == PEND_NODATA);
 
-                if (obuf_get_empty(&peer->obuf) > pktlen) {
+                if (pktlen <= obuf_get_empty(&peer->obuf)) {
                     PktHdr hdr = {
                         .type = PKTTYPE_LC_CLOSE,
                         .lc_id = lc->id,
