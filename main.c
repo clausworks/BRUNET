@@ -1444,7 +1444,7 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     last_acked = cachefile_get_ack(f);
     assert(last_acked < hdr->off); // non-SFN only
     cachefile_ack(f, hdr->off - last_acked);
-    printf("cachefile_get_ack: %llu\n", cachefile_get_ack(f));
+    printf("cachefile_get_ack [src]: %llu\n", cachefile_get_ack(f));
 
     if (lc->pending_cmd[peer_id] == PEND_LC_WILLCLOSE) {
         if (cachefile_get_unacked(f) == 0) {
@@ -2203,6 +2203,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         // delivered is if the user program itself closes the connection before it
         // has a chance to receive all the data. This is not our problem.
         cachefile_ack(cache, nbytes);
+        printf("cachefile_get_ack [dst]: %llu\n", cachefile_get_ack(cache));
         // TODO [future work]: accumulate ACKs to reduce their number, possibly
         // triggering them with timerfd/poll, like the reconnection system.
 
