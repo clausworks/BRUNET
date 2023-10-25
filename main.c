@@ -475,8 +475,8 @@ static int obuf_get_unacked(WriteBuf *buf) {
  */
 static void obuf_close_cleanup(WriteBuf *buf) {
     buf->last_acked = 0;
+    printf("obuf_close_cleanup: %d unacked bytes\n", obuf_get_unacked(buf));
     buf->r = buf->a;
-    printf("obuf_close_cleanup: %d unacked bytes", obuf_get_unacked(buf));
 }
 
 /* Calculates the number of bytes acknowledged by TCP on the given socket and
