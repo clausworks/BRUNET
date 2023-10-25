@@ -1445,6 +1445,14 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     assert(last_acked < hdr->off); // non-SFN only
     cachefile_ack(f, hdr->off - last_acked);
 
+    if (lc->pending_cmd[peer_id] == PEND_LC_CLOSE) {
+        if (cachefile_get_unacked(f) == 0) {
+            // This should trigger the LC_CLOSE packet
+            printf("Enabling POLLOUT for LC_CLOSE\n");
+            fds[fd_i].events |= POLLOUT;
+        }
+    }
+
     // TODO [future work]: pass this ACK packet to other peers
 
     return 0;
