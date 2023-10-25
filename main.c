@@ -61,6 +61,11 @@ void init_sighandlers() {
         perror("sigaction");
         exit(EXIT_FAILURE);
     }
+    // For assert:
+    if (0 != sigaction(SIGTERM, &sa, NULL)) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
 }
 
 /******************************************************************************
@@ -498,7 +503,7 @@ static void obuf_close_cleanup(WriteBuf *buf) {
 static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStatus *e) {
     long long unsigned current_acked;
     long long unsigned ack_increment;
-    int prelude, n;
+    long long unsigned prelude, n;
 
     if (bytes_acked(sock, &current_acked, e) < 0) {
         err_msg_prepend(e, "obuf_update_ack: ");
@@ -528,7 +533,7 @@ static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStat
     buf->last_acked += ack_increment;
     buf->total_acked += ack_increment;
 
-    printf("obuf_update_ack: a=%u, delta=%llu, n=%d\n", buf->a, ack_increment, n);
+    printf("obuf_update_ack: a=%u, delta=%llu, n=%llu\n", buf->a, ack_increment, n);
 
     return (int)(ack_increment);
 }
