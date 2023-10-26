@@ -887,7 +887,7 @@ static int create_reconnect_timer(ErrorStatus *e) {
 
     newtime.it_interval.tv_sec = 0; // Don't repeat.
     newtime.it_value.tv_sec = TFD_LEN_SEC;
-    newtime.it_value.tv_nsec = nsec_off;
+    newtime.it_value.tv_nsec = nsec_offset;
 
     timerfd = timerfd_create(CLOCK_BOOTTIME, TFD_NONBLOCK);
     if (timerfd < 0) {
