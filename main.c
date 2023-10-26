@@ -281,7 +281,7 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
         // interval.
     }
     else {
-        printf("attempt_connect: bind to %s\n", inet_ntoa(clnt_ip));
+        //printf("attempt_connect: bind to %s\n", inet_ntoa(clnt_ip));
     }
 
     printf("Attempting to connect to %s:%hu (fd=%d)\n", inet_ntoa(serv_ip),
@@ -388,13 +388,45 @@ int bytes_acked(int sock, long long unsigned int *nbytes, ErrorStatus *e) {
  *
  * Returns: number of (nonnegative) file descriptors added to peer_fds.
  */
-int _peer_compare_addr(const void *a, const void *b) {
+static int _peer_compare_addr(const void *a, const void *b) {
     PeerState *pa = (PeerState *)a;
     PeerState *pb = (PeerState *)b;
 
     return ((int)pa->addr.s_addr - (int)pb->addr.s_addr);
 }
 
+static void print_pkthdr(PktHdr *hdr) {
+    printf("PACKET - ");
+    switch (hdr->type) {
+        case PKTTYPE_LC_NEW:
+            printf("LC_NEW");
+            break;
+        case PKTTYPE_LC_CLOSE:
+            printf("LC_CLOSE");
+            break;
+        case PKTTYPE_LC_ACK:
+            printf("LC_ACK");
+            break;
+        case PKTTYPE_DATA:
+            printf("DATA");
+            break;
+        default:
+            assert(0);
+    }
+    printf(": lc_id=%llu, ", hdr->lc_id);
+    switch (hdr->dir) {
+        case PKTDIR_FWD:
+            printf("fwd, ");
+            break;
+        case PKTDIR_BKWD:
+            printf("bkwd, ");
+            break;
+        default:
+            assert(0);
+    }
+    printf("off=%llu, ", hdr->off);
+    printf("len=%hu\n", hdr->len);
+}
 
 
 /******************************************************************************
@@ -1502,18 +1534,20 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
 
+    print_pkthdr(hdr);
+
     switch (hdr->type) {
     case PKTTYPE_DATA:
-        printf("PKTTYPE_DATA\n");
+        //printf("PKTTYPE_DATA\n");
         return process_data_packet(state, fds, fd_i, e);
     case PKTTYPE_LC_NEW:
-        printf("PKTTYPE_LC_NEW\n");
+        //printf("PKTTYPE_LC_NEW\n");
         return process_lc_new(state, fds, fd_i, e);
     case PKTTYPE_LC_ACK:
-        printf("PKTTYPE_LC_ACK\n");
+        //printf("PKTTYPE_LC_ACK\n");
         return process_lc_ack(state, fds, fd_i, e);
     case PKTTYPE_LC_CLOSE:
-        printf("PKTTYPE_LC_CLOSE\n");
+        //printf("PKTTYPE_LC_CLOSE\n");
         return process_lc_close(state, fds, fd_i, e);
     default:
         printf("PKTTYPE unknown\n");
@@ -1870,6 +1904,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         .serv_id = lc->serv_id,
                         .serv_port = lc->serv_port
                     };
+                    print_pkthdr(&hdr);
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, (char *)(&payload), sizeof(LogConnPkt));
 
@@ -1923,6 +1958,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     hdr.off = cachefile_get_ack(f);
                     // TODO: update ack when obuf ack for user sock updates
 
+                    print_pkthdr(&hdr);
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
 
                     lc->pending_cmd[peer_id] = PEND_NONE;
@@ -1933,22 +1969,20 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             }
 
             // PACKET: DATA PACKET
-            if (lc->serv_id == peer_id) {
+            /*if (lc->serv_id == peer_id) {
                 printf("<< readlen: %llu >>\n",
                     cachefile_get_readlen(lc->cache.fwd.hdr_base, peer_id));
             }
             else if (lc->clnt_id == peer_id) {
                 printf("<< readlen: %llu >>\n",
                     cachefile_get_readlen(lc->cache.bkwd.hdr_base, peer_id));
-            }
+            }*/
 
             if (lc->pending_data[peer_id] == PEND_DATA) {
                 char buf[PKT_MAX_PAYLOAD_LEN];
                 long long unsigned paylen;
                 long long unsigned obuf_empty;
                 CacheFileHeader *f;
-
-                printf("<< PEND_DATA >>\n");
 
                 assert(lc->pending_cmd[peer_id] != PEND_LC_NEW);
                 
@@ -2000,6 +2034,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     hdr.len = paylen; // payload length
 
                     // Copy header, payload to output buffer
+                    print_pkthdr(&hdr);
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, buf, paylen);
 
@@ -2013,7 +2048,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     }
                 }
                 else {
-                    printf("Not enough space in obuf\n");
                     trigger_again = true;
                 }
             }
@@ -2077,6 +2111,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     //hdr.off = cachefile_get_ack(f);
                     // TODO: update ack when obuf ack for user sock updates
 
+                    print_pkthdr(&hdr);
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
 
                     lc->pending_cmd[peer_id] = PEND_NONE;
@@ -2086,7 +2121,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     }
                 }
                 else {
-                    printf("Not enough space in obuf\n");
                     trigger_again = true;
                 }
             }
@@ -2118,6 +2152,11 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
 
+    // debug
+    if (trigger_again) {
+        printf("Not enough space in obuf");
+    }
+
     // Re-enabled POLLOUT if any data needs to be read
     if (obuf_get_unread(&peer->obuf) > 0) {
         printf("Unread data in obuf\n");
@@ -2125,7 +2164,17 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     }
 
     // trigger_again will be true if any LC has data in its caches or if the
-    // buffer writev command didn't write all bytes
+    // buffer writev command didn't write all bytes.
+    //
+    // TODO [future work] [known bug]: if a connection goes down and all bytes
+    // in the buffer have been sent, but none of them are acked, the acks will
+    // never make it back. This will result in trigger_again continually being
+    // set to true. Because there is no activity on the socket, nothing will
+    // trigger a disconnect until possibly a timeout minutes (hours?) later. One
+    // possible solution involves setting keepalive on the socket. But a
+    // mechanism would need to be developed to track keepalive probes. Or,
+    // possibly use out-of-band data to force a connection failure? Also, not
+    // sure how that would work with ACKs. But it would be more manageable.
     if (trigger_again) {
         fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
     }
@@ -2216,14 +2265,14 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         if (fdtype == FDTYPE_USERSERV) {
             lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
             fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
-            printf("Set POLLOUT on clnt, fd %d\n",
-                fds[lc->clnt_id + POLL_PSOCKS_OFF].fd);
+            //printf("Set POLLOUT on clnt, fd %d\n",
+                //fds[lc->clnt_id + POLL_PSOCKS_OFF].fd);
         }
         else {
             lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
             fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
-            printf("Set POLLOUT on serv, fd %d\n",
-                fds[lc->serv_id + POLL_PSOCKS_OFF].fd);
+            //printf("Set POLLOUT on serv, fd %d\n",
+                //fds[lc->serv_id + POLL_PSOCKS_OFF].fd);
         }
         
         // Copy to output buffer
@@ -2297,14 +2346,14 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
 
     switch (state->user_serv_conns[i].sock_status) {
     case USSOCK_CONNECTING: // was connecting
-        printf("handle_pollout_userserv: USSOCK_CONNECTING\n");
+        //printf("handle_pollout_userserv: USSOCK_CONNECTING\n");
         fds[fd_i].events = POLLIN;// | POLLRDHUP;
         // TODO: enable POLLOUT?
         state->user_serv_conns[i].sock_status = USSOCK_CONNECTED;
         printf("Connected (fd %d)\n", fds[fd_i].fd);
         break;
     case USSOCK_CONNECTED: // already connected, data to write
-        printf("handle_pollout_userserv: USSOCK_CONNECTED\n");
+        //printf("handle_pollout_userserv: USSOCK_CONNECTED\n");
         // TODO: read from cache and write to server socket
         if (write_to_user_sock(state, fds, fd_i, FDTYPE_USERSERV, e) < 0) {
             return -1;
@@ -2333,13 +2382,13 @@ static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
 
     switch (state->peers[i].sock_status) {
     case PSOCK_CONNECTING: // was connecting
-        printf("handle_pollout_peer: PSOCK_CONNECTING\n");
+        //printf("handle_pollout_peer: PSOCK_CONNECTING\n");
         fds[fd_i].events = POLLIN | POLLRDHUP | POLLOUT;
         state->peers[i].sock_status = PSOCK_CONNECTED;
         printf("Connected (fd %d)\n", fds[fd_i].fd);
         break;
     case PSOCK_CONNECTED: // already connected, data to write
-        printf("handle_pollout_peer: PSOCK_CONNECTED\n");
+        //printf("handle_pollout_peer: PSOCK_CONNECTED\n");
         // Send sync before resuming (or starting) data transmission
         if (!state->peers[i].sync_sent) {
             // TODO: cheap hack -- read comments at definition of sync_peers
