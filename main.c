@@ -900,6 +900,9 @@ static int create_reconnect_timer(ErrorStatus *e) {
         return -1;
     }
 
+    printf("Reconnect timer: %lds, %ldns\n",
+        newtime.it_value.tv_sec, newtime.it_value.tv_nsec);
+
     return timerfd;
 }
 
@@ -1016,7 +1019,7 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
     if (num_expir > 0) {
         assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
 
-        printf("timer expired %llu times\n", num_expir);
+        //printf("timer expired %llu times\n", num_expir);
         // New attempt to connect to peer
         s = attempt_connect(state->peers[i].addr, htons(CF_PEER_LISTEN_PORT),
             state->peers[state->this_dev_id].addr, e);
