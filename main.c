@@ -2067,6 +2067,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     }
                 }
                 else {
+                    printf("Not enough space in obuf\n");
                     trigger_again = true;
                 }
             }
@@ -2100,6 +2101,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
     // Re-enabled POLLOUT if any data needs to be read
     if (obuf_get_unread(&peer->obuf) > 0) {
+        printf("Unread data in obuf\n");
         trigger_again = true;
     }
 
