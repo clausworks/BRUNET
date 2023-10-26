@@ -15,6 +15,7 @@
 #include <linux/netfilter_ipv4.h>
 #include <stddef.h>
 #include <linux/tcp.h>  // needed instead of netinet/tcp.h for tcpi_bytes_acked
+#include <time.h>
 
 #include "error.h"
 #include "configfile.h"
@@ -868,11 +869,25 @@ static int init_connectivity_state(ConnectivityState *state,
  */
 
 static int create_reconnect_timer(ErrorStatus *e) {
+    static bool seeded = false;
+
     int timerfd;
     struct itimerspec newtime = {0};
+    long nsec_offset;
+
+    // Randomize timer slightly to avoid race conditions
+    if (!seeded) {
+        srand(time(NULL));
+        seeded = true;
+    }
+    nsec_offset = rand() % 10; // +/- 10ns
+    nsec_offset *= 1000; // us
+    nsec_offset *= 1000; // ms
+    nsec_offset *= 100; // tenths of a second
 
     newtime.it_interval.tv_sec = 0; // Don't repeat.
     newtime.it_value.tv_sec = TFD_LEN_SEC;
+    newtime.it_value.tv_nsec = nsec_off;
 
     timerfd = timerfd_create(CLOCK_BOOTTIME, TFD_NONBLOCK);
     if (timerfd < 0) {
@@ -965,18 +980,18 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
 
         assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
         // TODO: attempt reconnect immediately
-        if (state->this_dev_id < i) {
-            if ((s = create_reconnect_timer(e)) < 0) {
-                return -1; // fatal error
-            }
-            fds[fd_i].events = POLLIN; // TODO: change this back at retry
-            state->peers[i].sock = s;
-            state->peers[i].sock_status = PSOCK_WAITING;
+        //if (state->this_dev_id < i) {
+        if ((s = create_reconnect_timer(e)) < 0) {
+            return -1; // fatal error
         }
+        fds[fd_i].events = POLLIN; // TODO: change this back at retry
+        state->peers[i].sock = s;
+        state->peers[i].sock_status = PSOCK_WAITING;
+        /*}
         else {
             state->peers[i].sock = -1;
             state->peers[i].sock_status = PSOCK_INVALID;
-        }
+        }*/
         break;
 
     }
