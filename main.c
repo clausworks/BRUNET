@@ -140,10 +140,11 @@ static int set_so_nodelay(int sock, ErrorStatus *e) {
 }
 
 static int set_so_timeout(int sock, ErrorStatus *e) {
-    int to = 5;
+    unsigned to = 5; // number of seconds ti timeout
     int status;
 
-    status = setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT, &to, sizeof(int));
+    status = setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT,
+        &to, sizeof(unsigned));
     if (status < 0) {
         err_msg_errno(e, "set_so_timeout");
         return -1;
@@ -1282,6 +1283,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
     // Accept
     sock = accept(fds[fd_i].fd, (struct sockaddr *)(&peer_addr), &addrlen);
     if (set_so_nodelay(sock, e) < 0) { return -1; }
+    if (set_so_timeout(sock, e)) { return -1; }
     //if (block_till_connected(sock, e) < 0) { return -1; }
     //if (set_so_quickack(sock, e) < 0) { return -1; }
 
