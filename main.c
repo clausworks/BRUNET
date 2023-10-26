@@ -396,7 +396,7 @@ static int _peer_compare_addr(const void *a, const void *b) {
 }
 
 static void print_pkthdr(PktHdr *hdr) {
-    printf("PACKET - ");
+    printf("### ");
     switch (hdr->type) {
         case PKTTYPE_LC_NEW:
             printf("LC_NEW");
@@ -425,7 +425,7 @@ static void print_pkthdr(PktHdr *hdr) {
             assert(0);
     }
     printf("off=%llu, ", hdr->off);
-    printf("len=%hu\n", hdr->len);
+    printf("len=%hu ###\n", hdr->len);
 }
 
 
@@ -1861,7 +1861,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     PeerState *peer = &state->peers[peer_id];
     bool trigger_again = false;
 
-    printf("send_packet\n");
+    //printf("send_packet\n");
 
     if (peer->lc_iter == NULL) {
         peer->lc_iter = dict_iter_new(lcs);
@@ -1883,7 +1883,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         int pktlen;
         // Non-SFN case: look for LC 
         if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
-            printf("Sending packets on LC ID %x\n", lc->id);
+            //printf("Sending packets on LC ID %x\n", lc->id);
             
             // PACKET: LC_NEW
             if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
