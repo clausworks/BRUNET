@@ -1826,6 +1826,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     PeerState *peer = &state->peers[peer_id];
     bool trigger_again = false;
 
+    printf("send_packet\n");
+
     if (peer->lc_iter == NULL) {
         peer->lc_iter = dict_iter_new(lcs);
         if (peer->lc_iter == NULL) {
@@ -1846,6 +1848,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         int pktlen;
         // Non-SFN case: look for LC 
         if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
+            printf("Sending packets on LC ID %x\n", lc->id);
             
             // PACKET: LC_NEW
             if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
@@ -1929,11 +1932,22 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             }
 
             // PACKET: DATA PACKET
+            if (lc->serv_id == peer_id) {
+                printf("<< readlen: %llu >>\n",
+                    cachefile_get_readlen(lc->cache.fwd.hdr_base, peer_id));
+            }
+            else if (lc->clnt_id == peer_id) {
+                printf("<< readlen: %llu >>\n",
+                    cachefile_get_readlen(lc->cache.bkwd.hdr_base, peer_id));
+            }
+
             if (lc->pending_data[peer_id] == PEND_DATA) {
                 char buf[PKT_MAX_PAYLOAD_LEN];
                 long long unsigned paylen;
                 long long unsigned obuf_empty;
                 CacheFileHeader *f;
+
+                printf("<< PEND_DATA >>\n");
 
                 assert(lc->pending_cmd[peer_id] != PEND_LC_NEW);
                 
@@ -1996,6 +2010,10 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         // don't disable pollout, in case another LC enabled it
                         lc->pending_data[peer_id] = PEND_NODATA;
                     }
+                }
+                else {
+                    printf("Not enough space in obuf\n");
+                    trigger_again = true;
                 }
             }
 
