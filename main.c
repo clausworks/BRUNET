@@ -1551,6 +1551,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
             }
 
             nbytes = hdr->len - (buf->w - sizeof(PktHdr));
+            assert(nbytes != 0);
 
             //assert(nbytes < buf->len - buf->w);
 
@@ -1561,8 +1562,6 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
         printf("%d bytes read, %d attempted (fd %d)\n", read_len, nbytes, fds[fd_i].fd);
         //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
-        buf->w += nbytes; // TODO: is this correct? should it be read_len?
-
 
         // EOF
         if (read_len == 0) {
@@ -1585,12 +1584,14 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         }
         // Incomplete
         else if (read_len < nbytes) {
+            buf->w += read_len;
             buf->total_read += read_len;
             printf("Incomplete packet\n");
             return 0; // finish read on next run
         }
         // Complete
         else {
+            buf->w += read_len;
             buf->total_read += read_len;
         }
 
