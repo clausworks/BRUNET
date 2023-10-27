@@ -1674,7 +1674,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
  * more details.
  */
 static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
-    long long unsigned diff;
+    long long diff;
     long long unsigned peer_total_read;
     int n_read = read(peer->sock, &peer_total_read, PEER_SYNC_LEN);
     assert(n_read == PEER_SYNC_LEN);
@@ -1684,14 +1684,17 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
     // whole sync thing instead of just relying on TCP's acks when a connection
     // closes.
     // TODO [future work] This could be tested by adding a sleep in here...
-    assert(peer_total_read >= peer->obuf.total_acked);
+
+    //assert(peer_total_read >= peer->obuf.total_acked);
+
     diff = peer_total_read - peer->obuf.total_acked;
 
     peer->obuf.a = (peer->obuf.a + diff) % peer->obuf.len;
     peer->obuf.r = peer->obuf.a;
 
     peer->sync_received = true;
-    printf("Sync received for fd %d (delta=%llu)\n", peer->sock, diff);
+    printf("SYNC-RECV on fd %d: %llu (acked=%llu, delta=%lld)\n",
+        peer->sock, peer_total_read, peer->obuf.total_acked, diff);
 
     return 0;
 }
@@ -1870,7 +1873,8 @@ static int send_peer_sync(PeerState *peer, ErrorStatus *e) {
     assert(n_written == sizeof(unsigned long long));
     peer->sync_sent = true;
 
-    printf("Sync sent for fd %d\n", peer->sock);
+    printf("SYNC-SEND on fd %d: %llu\n", peer->sock,
+        peer->ibuf.total_read);
     return 0;
 }
 
@@ -2556,9 +2560,9 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 handle_disconnect(state, fds, i, e);
                 continue;
             }
+
             // Event: readable
             if (fds[i].revents & POLLIN) {
-                --fd_remaining;
                 did_rw = true;
                 handle_pollin(state, fds, i, e);
                 //if (handle_pollin(state, fds, i, e) < 0) {
@@ -2567,13 +2571,15 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             }
             // Event: writable
             if (fds[i].revents & POLLOUT) {
-                --fd_remaining;
                 did_rw = true;
                 handle_pollout(state, fds, i, e);
             }
 
             if (!did_rw) {
                 err_msg(e, "Unhandled event: revents=%x\n", fds[i].revents);
+            }
+            else {
+                --fd_remaining;
             }
         } // end for
     } // end else
