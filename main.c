@@ -140,7 +140,7 @@ static int set_so_nodelay(int sock, ErrorStatus *e) {
 }
 
 static int set_so_timeout(int sock, ErrorStatus *e) {
-    unsigned to = 5000; // number of seconds till timeout
+    unsigned to = 2000; // number of seconds till timeout
     int status;
 
     status = setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT,
@@ -1715,6 +1715,7 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
             // TODO [future work]: handle return value & fix cheap hack.
             // See comments for receive_peer_sync.
             receive_peer_sync(&state->peers[i], e);
+            fds[fd_i].events |= POLLOUT;
         }
         break;
     case PSOCK_CONNECTING: // was connecting
