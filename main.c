@@ -119,7 +119,7 @@ static int has_so_error(int sock, ErrorStatus *e) {
     if (so_error) {
         // TODO: interpret so_error (same as errno?)
         errno = so_error;
-        perror("SO_ERROR on fd %d");
+        printf("SO_ERROR on fd %d: %s", sock, strerror(errno));
         errno = 0;
         return so_error;
     }
@@ -2531,12 +2531,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             // Event: hangup
             if (fds[i].revents & POLLHUP) {
                 --fd_remaining;
-                if (errno == ETIMEDOUT) {
-                    err_msg_errno(e, "POLLHUP");
-                }
-                else {
-                    err_msg(e, "POLLHUP");
-                }
+                err_msg(e, "POLLHUP");
                 handle_disconnect(state, fds, i, e);
                 continue;
             }
