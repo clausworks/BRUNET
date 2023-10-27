@@ -1679,7 +1679,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
  * more details.
  */
 static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
-    long long diff;
+    long long unsigned diff;
     long long unsigned peer_total_read;
     int n_read = read(peer->sock, &peer_total_read, PEER_SYNC_LEN);
     assert(n_read == PEER_SYNC_LEN);
@@ -1690,7 +1690,7 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
     // closes.
     // TODO [future work] This could be tested by adding a sleep in here...
 
-    //assert(peer_total_read >= peer->obuf.total_acked);
+    assert(peer_total_read >= peer->obuf.total_acked);
 
     diff = peer_total_read - peer->obuf.total_acked;
 
@@ -1707,7 +1707,9 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
     printf("    obuf->a: %d\n", peer->obuf.a);
 
     peer->obuf.a = (peer->obuf.a + diff) % peer->obuf.len;
-    peer->obuf.r = peer->obuf.a;
+    peer->obuf.total_acked += diff;
+    assert(peer->obuf.r == peer->obuf.a);
+    assert(peer->obuf.total_acked == peer->obuf.total_written);
 
     return 0;
 }
@@ -2435,6 +2437,7 @@ static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
             // Also, (future work) handle the return value after fixing said
             // issues.
             send_peer_sync(&state->peers[i], e);
+            fds[fd_i].events = POLLIN | POLLOUT | POLLRDHUP;
         }
         // Also, we need to wait till we've received the sync before sending any
         // new packets.
