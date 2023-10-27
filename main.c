@@ -27,15 +27,19 @@
 
 
 
-void sighandler_cleanup(int sig) {
+void exit_cleanly() {
     rs_cleanup();
     exit(0);
+}
+
+void exit_sighandler(int sig) {
+    exit_cleanly();
 }
 
 void init_sighandlers() {
     struct sigaction sa = {0};
 
-    sa.sa_handler = sighandler_cleanup;
+    sa.sa_handler = exit_cleanly;
 
     // Signals to block during execution
     if (0 != sigemptyset(&(sa.sa_mask))) {
@@ -1719,6 +1723,7 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
             // See comments for receive_peer_sync.
             receive_peer_sync(&state->peers[i], e);
             fds[fd_i].events = POLLIN | POLLOUT | POLLRDHUP;
+            exit_cleanly();
         }
         break;
     case PSOCK_CONNECTING: // was connecting
