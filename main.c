@@ -1938,7 +1938,11 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         int pktlen;
         // Non-SFN case: look for LC 
         if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
-            //printf("Sending packets on LC ID %x\n", lc->id);
+            if (lc->received_close) {
+                printf("send_packet cancelled: received close packet\n");
+                //continue;
+                goto advance;
+            }
             
             // PACKET: LC_NEW
             if (lc->pending_cmd[peer_id] == PEND_LC_NEW) {
@@ -2109,7 +2113,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
             // To close, PEND_LC_WILLCLOSE must be set for the LC, and we need
             // to have no data pending on the output stream.
-            // TODO: ensure POLLOUT will be triggereed for LC_CLOSE when needed.
+            // TODO: ensure POLLOUT will be triggered for LC_CLOSE when needed.
             if (lc->pending_cmd[peer_id] == PEND_LC_WILLCLOSE
                 && lc->pending_data[peer_id] == PEND_NODATA) {
                 CacheFileHeader *f;
@@ -2128,12 +2132,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             }
 
             // PACKET: LC_CLOSE
-            // TODO: make sure connection isn't closed before all data is sent
-            // Turn off PEND_DATA elsewhere?
-            // note - pending data only applies to outgoing data. It should
-            // remain on until all data from the socket has been sent.
-            // Update: we actually need to wait till all data has been sent AND
-            // acked.
             if (lc->pending_cmd[peer_id] == PEND_LC_CLOSE) {
                 pktlen = sizeof(PktHdr);
 
@@ -2152,12 +2150,10 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     if (lc->serv_id == peer_id) {
                         // Packet goes forward (to server)
                         hdr.dir = PKTDIR_FWD;
-                        //f = lc->cache.bkwd.hdr_base;
                     }
                     else if (lc->clnt_id == peer_id) {
                         // Packet goes backward (to client)
                         hdr.dir = PKTDIR_BKWD;
-                        //f = lc->cache.fwd.hdr_base;
                     }
                     else {
                         assert(0); // Should not reach in non-SFN case
@@ -2169,8 +2165,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     print_pkthdr(&hdr);
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
 
+                    // Note: socket has already been set to -1
                     lc->pending_cmd[peer_id] = PEND_NONE;
-                    // TODO: delete LC
                     if (lc_destroy(state, lc->id, e) < 0) {
                         return -1;
                     }
@@ -2193,6 +2189,10 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // final destination
         }
 
+
+        // We use a goto here so "goto advance" is like "continue"
+advance:
+        // TODO: what happens when this gets to the end of the list?
         // Advance LC iterator
         if (!dict_iter_hasnext(peer->lc_iter)) {
             break;
@@ -2351,11 +2351,11 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         fds[fd_i].events |= POLLOUT;
     }
     else if (lc->received_close) {
-        // A received close command can only be processed after all data has
-        // been read from the cache. Also note that if we received a close
-        // message, it arrived after all available data in the stream had
-        // arrived as well, since there is no way for data in this system to be
-        // transmitted out-of-order.
+        // A received close command should only be processed after all data has
+        // been read from the cache and sent to the user socket. Also note that
+        // if we received a close message, it arrived at the end of the data
+        // stream from the closed socket on the other side, so the LC has been
+        // destroyed on the other side by now.
         close(fds[fd_i].fd);
         printf("Closed socket (fd=%d)\n", fds[fd_i].fd);
         if (fdtype == FDTYPE_USERSERV) {
