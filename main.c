@@ -561,14 +561,14 @@ static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStat
         n = (prelude < ack_increment) ? prelude : ack_increment;
         ack_increment -= n;
         buf->last_acked += n;
-        buf->total_acked += n;
     }
 
     // Ensures ack_increment can fit in an int32_t value
     assert(ack_increment <= obuf_get_unacked(buf));
 
-    buf->a = (buf->a + ack_increment) % buf->len;
     buf->last_acked += ack_increment;
+
+    buf->a = (buf->a + ack_increment) % buf->len;
     buf->total_acked += ack_increment;
 
     printf("obuf_update_ack: a=%u, delta=%llu, total=%llu\n", buf->a,
