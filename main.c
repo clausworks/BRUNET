@@ -2531,7 +2531,12 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             // Event: hangup
             if (fds[i].revents & POLLHUP) {
                 --fd_remaining;
-                err_msg(e, "POLLHUP");
+                if (errno == ETIMEDOUT) {
+                    err_msg_errno(e, "POLLHUP");
+                }
+                else {
+                    err_msg(e, "POLLHUP");
+                }
                 handle_disconnect(state, fds, i, e);
                 continue;
             }
