@@ -402,7 +402,7 @@ static int _peer_compare_addr(const void *a, const void *b) {
 }
 
 static void print_pkthdr(PktHdr *hdr) {
-    printf("### ");
+    printf("PACKET ");
     switch (hdr->type) {
         case PKTTYPE_LC_NEW:
             printf("LC_NEW");
@@ -414,22 +414,22 @@ static void print_pkthdr(PktHdr *hdr) {
             printf("LC_ACK");
             break;
         case PKTTYPE_LC_DATA:
-            printf("DATA");
+            printf("LC_DATA");
+            break;
+        default:
+            assert(0);
+    }
+    switch (hdr->dir) {
+        case PKTDIR_FWD:
+            printf("(clnt->serv)");
+            break;
+        case PKTDIR_BKWD:
+            printf("(serv->clnt)");
             break;
         default:
             assert(0);
     }
     printf(": lc_id=%llu, ", hdr->lc_id);
-    switch (hdr->dir) {
-        case PKTDIR_FWD:
-            printf("fwd, ");
-            break;
-        case PKTDIR_BKWD:
-            printf("bkwd, ");
-            break;
-        default:
-            assert(0);
-    }
     printf("off=%llu, ", hdr->off);
     printf("len=%hu ###\n", hdr->len);
 }
@@ -1449,7 +1449,7 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
     // This will be the case even if it has already succeeded.
 }
 
-static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
+static int process_lc_data(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
@@ -1470,6 +1470,9 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
         printf("Note: ignored LC_DATA (LC doesn't exist)\n");
         return 0;
     }
+
+    // TODO [future work]: only write data to cache file if it hasn't been
+    // written already. Verify this by checking the header's offset value.
     
     switch (hdr->dir) {
     case PKTDIR_FWD:
@@ -1579,7 +1582,7 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
     switch (hdr->type) {
     case PKTTYPE_LC_DATA:
         //printf("PKTTYPE_LC_DATA\n");
-        return process_data_packet(state, fds, fd_i, e);
+        return process_lc_data(state, fds, fd_i, e);
     case PKTTYPE_LC_NEW:
         //printf("PKTTYPE_LC_NEW\n");
         return process_lc_new(state, fds, fd_i, e);
