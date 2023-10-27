@@ -123,7 +123,7 @@ static int has_so_error(int sock, ErrorStatus *e) {
     if (so_error) {
         // TODO: interpret so_error (same as errno?)
         errno = so_error;
-        printf("SO_ERROR on fd %d: %s", sock, strerror(errno));
+        printf("SO_ERROR on fd %d: %s\n", sock, strerror(errno));
         errno = 0;
         return so_error;
     }
@@ -519,9 +519,10 @@ static int obuf_get_unacked(WriteBuf *buf) {
 
 static void obuf_close_cleanup(WriteBuf *buf) {
     buf->last_acked = 0;
-    buf->is_paused = false;
+    //buf->is_paused = false;
 }
 
+/*
 static void obuf_pause_for_acks(WriteBuf *buf) {
     buf->is_paused = true;
 }
@@ -529,6 +530,7 @@ static void obuf_pause_for_acks(WriteBuf *buf) {
 static bool obuf_is_paused(WriteBuf *buf) {
     return buf->is_paused;
 }
+*/
 
 /* Calculates the number of bytes acknowledged by TCP on the given socket and
  * updates the buffer's internal ack pointer accordingly. This frees up space in
@@ -573,7 +575,7 @@ static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStat
     buf->a = (buf->a + ack_increment) % buf->len;
     buf->total_acked += ack_increment;
 
-    buf->is_paused = false;
+    //buf->is_paused = false;
 
     printf("obuf_update_ack: a=%u, delta=%llu, total=%llu\n", buf->a,
         ack_increment, buf->total_acked);
@@ -1913,7 +1915,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     PeerState *peer = &state->peers[peer_id];
     bool out_of_space = false;
-    bool trigger_again = false;
+    bool more_data = false;
     int n_written;
 
     //printf("send_packet\n");
@@ -2203,7 +2205,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     } // end while
 
     if (out_of_space) {
-        printf("Not enough space in obuf");
+        printf("Not enough space in obuf\n");
     }
 
     // After assembling packets, write buffer
@@ -2213,33 +2215,18 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     }
     else if (n_written == 0 && out_of_space) {
         // everything written
-        trigger_again = false;
+        //obuf_pause_for_acks(&peer->obuf);
+        //trigger_again = false;
+        // TODO: continue here........................................................................................
     }
 
     // Re-enabled POLLOUT if any data needs to be read
     if (obuf_get_unread(&peer->obuf) > 0) {
         printf("Unread data in obuf\n");
-        trigger_again = true;
-    }
-    else if (out_of_space) {
-        obuf_pause_for_acks(&peer->obuf);
-        trigger_again = false;
-        // POLLOUT will be manually re-enabled outside of poll_once. 
+        more_data = true;
     }
 
-    // trigger_again will be true if any LC has data in its caches or if the
-    // buffer writev command didn't write all bytes.
-    //
-    // TODO [future work] [known bug]: if a connection goes down and all bytes
-    // in the buffer have been sent, but none of them are acked, the acks will
-    // never make it back. This will result in trigger_again continually being
-    // set to true. Because there is no activity on the socket, nothing will
-    // trigger a disconnect until possibly a timeout minutes (hours?) later. One
-    // possible solution involves setting keepalive on the socket. But a
-    // mechanism would need to be developed to track keepalive probes. Or,
-    // possibly use out-of-band data to force a connection failure? Also, not
-    // sure how that would work with ACKs. But it would be more manageable.
-    if (trigger_again) {
+    if (more_data || out_of_space) {
         fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
     }
 
@@ -2525,6 +2512,7 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
 static int try_unpause(ConnectivityState *state, struct pollfd fds[],
     ErrorStatus fd_errors[], ErrorStatus *main_err) {
 
+    /*
     for (int i = 0; i < state->n_peers; ++i) { 
         PeerState *peer = &state->peers[i];
         if (obuf_is_paused(&peer->obuf)) {
@@ -2546,6 +2534,7 @@ static int try_unpause(ConnectivityState *state, struct pollfd fds[],
             }
         }
     }
+    */
 
     return 0;
 }
