@@ -1702,6 +1702,9 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
     printf("    obuf.total_written: %llu\n", peer->obuf.total_written);
     printf("    peer_total_read:    %llu\n", peer_total_read);
     printf("    obuf.total_acked:   %llu\n", peer->obuf.total_acked);
+    printf("    read - acked:       %lld\n", (long long)(peer_total_read - peer->obuf.total_acked));
+    printf("    obuf unacked (1):   %d\n", obuf_get_unacked(&peer->obuf));
+    printf("    obuf unacked (2):   %llu\n", peer->obuf.total_written - peer->obuf.total_acked);
 
     return 0;
 }
