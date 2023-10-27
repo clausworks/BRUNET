@@ -517,15 +517,17 @@ static int obuf_get_unacked(WriteBuf *buf) {
     }
 }
 
-/* This function should be called after obuf_update_ack right before a socket is
- * closed (due to POLLHUP or similar). This ensures the relative ack_increment
- * value is accurate when obuf_update_ack is called again on a new socket. It
- * also ensures that all unacked data will be resent.
- */
 static void obuf_close_cleanup(WriteBuf *buf) {
     buf->last_acked = 0;
-    printf("obuf_close_cleanup: %d unacked bytes\n", obuf_get_unacked(buf));
-    //buf->r = buf->a;
+    buf->is_paused = false;
+}
+
+static void obuf_pause_for_acks(WriteBuf *buf) {
+    buf->is_paused = true;
+}
+
+static bool obuf_is_paused(WriteBuf *buf) {
+    return buf->is_paused;
 }
 
 /* Calculates the number of bytes acknowledged by TCP on the given socket and
@@ -570,6 +572,8 @@ static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStat
 
     buf->a = (buf->a + ack_increment) % buf->len;
     buf->total_acked += ack_increment;
+
+    buf->is_paused = false;
 
     printf("obuf_update_ack: a=%u, delta=%llu, total=%llu\n", buf->a,
         ack_increment, buf->total_acked);
@@ -629,7 +633,7 @@ static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
 
     // Update read head based on how many bytes were successfully written
     buf->r = (buf->r + n_written) % buf->len;
-    buf->total_written += n_written;
+    buf->total_sent += n_written;
 
     return n_written;
 }
@@ -686,6 +690,7 @@ static void copy_to_obuf(WriteBuf *buf, char *new, int len) {
  * poll.
  */
 static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
+
     struct pollfd *userclnt_fds = fds + POLL_UCSOCKS_OFF;
     struct pollfd *userserv_fds = fds + POLL_USSOCKS_OFF;
     struct pollfd *peer_fds = fds + POLL_PSOCKS_OFF;
@@ -703,10 +708,12 @@ static void update_poll_fds(struct pollfd fds[], ConnectivityState *state) {
 
     // Proxy sockets from other peers
     for (int i = 0; i < state->n_peers; ++i) {
-        if (state->peers[i].sock_status == PSOCK_THIS_DEVICE) {
-            assert(state->peers[i].sock == -1);
+        PeerState *peer = &state->peers[i];
+        if (peer->sock_status == PSOCK_THIS_DEVICE) {
+            assert(peer->sock == -1);
         }
-        peer_fds[i].fd = state->peers[i].sock;
+
+        peer_fds[i].fd = peer->sock;
     }
 }
 
@@ -982,7 +989,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         // the system are symmetric, this is good enough.
         i = fd_i - POLL_PSOCKS_OFF;
         // BEFORE closing, we need to prepare the obuf for a reconnect
-        obuf_update_ack(&state->peers[i].obuf, fds[fd_i].fd, true, e);
+        //obuf_update_ack(&state->peers[i].obuf, fds[fd_i].fd, true, e);
         obuf_close_cleanup(&state->peers[i].obuf);
 
         close(fds[fd_i].fd); // close disconnected socket
@@ -1193,8 +1200,8 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
 
     case PSOCK_CONNECTED:
         printf("cleanup obuf before close...\n");
-        obuf_update_ack(&state->peers[peer_id].obuf,
-            state->peers[peer_id].sock, true, e);
+        //obuf_update_ack(&state->peers[peer_id].obuf,
+            //state->peers[peer_id].sock, true, e);
         obuf_close_cleanup(&state->peers[peer_id].obuf);
 
     case PSOCK_WAITING: // timerfd
@@ -1646,14 +1653,14 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         // Incomplete
         else if (read_len < nbytes) {
             buf->w += read_len;
-            buf->total_read += read_len;
+            buf->total_received += read_len;
             printf("Incomplete packet\n");
             return 0; // finish read on next run
         }
         // Complete
         else {
             buf->w += read_len;
-            buf->total_read += read_len;
+            buf->total_received += read_len;
         }
 
         // Finished reading entire packet?
@@ -1679,9 +1686,9 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
  * more details.
  */
 static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
-    long long unsigned diff;
-    long long unsigned peer_total_read;
-    int n_read = read(peer->sock, &peer_total_read, PEER_SYNC_LEN);
+    long long unsigned ack_increment;
+    long long unsigned peer_total_received;
+    int n_read = read(peer->sock, &peer_total_received, PEER_SYNC_LEN);
     assert(n_read == PEER_SYNC_LEN);
 
     // In an ideal world, these should be equal. However, some acks can get lost
@@ -1690,26 +1697,30 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
     // closes.
     // TODO [future work] This could be tested by adding a sleep in here...
 
-    assert(peer_total_read >= peer->obuf.total_acked);
+    assert(peer_total_received >= peer->obuf.total_acked);
 
-    diff = peer_total_read - peer->obuf.total_acked;
+    // Increment: bytes whose ack didn't make it back
+    ack_increment = peer_total_received - peer->obuf.total_acked;
 
     peer->sync_received = true;
     printf("SYNC-RECV on fd %d:\n", peer->sock);
-    printf("    obuf.total_written: %llu\n", peer->obuf.total_written);
-    printf("    peer_total_read:    %llu\n", peer_total_read);
-    printf("    obuf.total_acked:   %llu\n", peer->obuf.total_acked);
-    printf("    read - acked:       %lld\n", (long long)(peer_total_read - peer->obuf.total_acked));
-    printf("    obuf unacked (1):   %d\n", obuf_get_unacked(&peer->obuf));
-    printf("    obuf unacked (2):   %llu\n", peer->obuf.total_written - peer->obuf.total_acked);
+    printf("    obuf.total_sent:     %llu\n", peer->obuf.total_sent);
+    printf("    peer_total_received: %llu\n", peer_total_received);
+    printf("    obuf.total_acked:    %llu\n", peer->obuf.total_acked);
+    printf("    read - acked:        %llu\n", ack_increment);
+    printf("    obuf unacked (1):    %d\n", obuf_get_unacked(&peer->obuf));
+    printf("    obuf unacked (2):    %llu\n", peer->obuf.total_sent - peer->obuf.total_acked);
+    printf("    obuf unread:         %d\n", obuf_get_unread(&peer->obuf));
     printf("    obuf->w: %d\n", peer->obuf.w);
     printf("    obuf->r: %d\n", peer->obuf.r);
     printf("    obuf->a: %d\n", peer->obuf.a);
 
-    peer->obuf.a = (peer->obuf.a + diff) % peer->obuf.len;
-    peer->obuf.total_acked += diff;
-    assert(peer->obuf.r == peer->obuf.a);
-    assert(peer->obuf.total_acked == peer->obuf.total_written);
+    // Advance ACK pointer based on number received on opposite end
+    peer->obuf.a = (peer->obuf.a + ack_increment) % peer->obuf.len;
+    peer->obuf.total_acked += ack_increment;
+    // Back up read pointer so we re-send unread (=unacked) bytes.
+    peer->obuf.r = peer->obuf.a;
+    peer->obuf.total_sent = peer->obuf.total_acked;
 
     return 0;
 }
@@ -1884,13 +1895,13 @@ static int send_peer_sync(PeerState *peer, ErrorStatus *e) {
     char output[sizeof(unsigned long long)];
     int n_written;
 
-    memcpy(output, &peer->ibuf.total_read, sizeof(unsigned long long));
+    memcpy(output, &peer->ibuf.total_received, sizeof(unsigned long long));
     n_written = write(peer->sock, output, sizeof(unsigned long long));
     assert(n_written == sizeof(unsigned long long));
     peer->sync_sent = true;
 
     printf("SYNC-SEND on fd %d: %llu\n", peer->sock,
-        peer->ibuf.total_read);
+        peer->ibuf.total_received);
     return 0;
 }
 
@@ -1901,7 +1912,9 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     LogConn *lc;
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF;
     PeerState *peer = &state->peers[peer_id];
+    bool out_of_space = false;
     bool trigger_again = false;
+    int n_written;
 
     //printf("send_packet\n");
 
@@ -1953,7 +1966,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     lc->pending_cmd[peer_id] = PEND_NONE;
                 }
                 else {
-                    trigger_again = true;
+                    out_of_space = true;
                     // TODO [future work]: opportunity for ordered queue.
                     // Perhaps bump up this LC to the head of the queue so it
                     // gets considered sooner.
@@ -2006,7 +2019,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     lc->pending_cmd[peer_id] = PEND_NONE;
                 }
                 else {
-                    trigger_again = true;
+                    out_of_space = true;
                 }
             }
 
@@ -2058,14 +2071,14 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     printf("cachefile_get_readlen: %llu\n", paylen);
                     if (PKT_MAX_PAYLOAD_LEN < paylen) {
                         paylen = PKT_MAX_PAYLOAD_LEN;
-                        trigger_again = true;
+                        out_of_space = true;
                     }
                     // Check total packet size
                     // Note: we know paylen will be positive because obuf_empty
                     // is at least the header length + 1.
                     if (obuf_empty < paylen + sizeof(PktHdr)) {
                         paylen = obuf_empty - sizeof(PktHdr);
-                        trigger_again = true;
+                        out_of_space = true;
                     }
                     // This should always succeed, since paylen <= readlen
                     hdr.off = cachefile_get_read(f, peer_id);
@@ -2080,7 +2093,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
                     copy_to_obuf(&peer->obuf, buf, paylen);
 
-                    if (trigger_again) {
+                    if (out_of_space) {
                         // re-enabled pollout
                         lc->pending_data[peer_id] = PEND_DATA;
                     }
@@ -2090,7 +2103,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     }
                 }
                 else {
-                    trigger_again = true;
+                    out_of_space = true;
                 }
             }
 
@@ -2163,7 +2176,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     }
                 }
                 else {
-                    trigger_again = true;
+                    out_of_space = true;
                 }
             }
 
@@ -2189,20 +2202,29 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         }
     } // end while
 
-    // After assembling packets, write buffer
-    if (writev_from_obuf(&peer->obuf, peer->sock, e) < 0) {
-        return -1;
+    if (out_of_space) {
+        printf("Not enough space in obuf");
     }
 
-    // debug
-    if (trigger_again) {
-        printf("Not enough space in obuf");
+    // After assembling packets, write buffer
+    n_written = writev_from_obuf(&peer->obuf, peer->sock, e);
+    if (n_written < 0) {
+        return -1;
+    }
+    else if (n_written == 0 && out_of_space) {
+        // everything written
+        trigger_again = false;
     }
 
     // Re-enabled POLLOUT if any data needs to be read
     if (obuf_get_unread(&peer->obuf) > 0) {
         printf("Unread data in obuf\n");
         trigger_again = true;
+    }
+    else if (out_of_space) {
+        obuf_pause_for_acks(&peer->obuf);
+        trigger_again = false;
+        // POLLOUT will be manually re-enabled outside of poll_once. 
     }
 
     // trigger_again will be true if any LC has data in its caches or if the
@@ -2500,6 +2522,34 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
+static int try_unpause(ConnectivityState *state, struct pollfd fds[],
+    ErrorStatus fd_errors[], ErrorStatus *main_err) {
+
+    for (int i = 0; i < state->n_peers; ++i) { 
+        PeerState *peer = &state->peers[i];
+        if (obuf_is_paused(&peer->obuf)) {
+            assert(peer->sock_status == PSOCK_CONNECTED);
+            // Try to unpause
+            obuf_update_ack(&peer->obuf, peer->sock, true, &fd_errors[i]);
+            err_show_if_present(fd_errors + i);
+            err_reset(fd_errors + i);
+
+            // Still paused? Disable pollout.
+            if (obuf_is_paused(&peer->obuf)) {
+                printf("PAUSE: disabled POLLOUT on fd %d\n", peer->sock);
+                fds[i + POLL_PSOCKS_OFF].events &= POLLOUT;
+            }
+            // Unpaused: enable pollout
+            else {
+                printf("PAUSE: enabled POLLOUT on fd %d\n", peer->sock);
+                fds[i + POLL_PSOCKS_OFF].events |= POLLOUT;
+            }
+        }
+    }
+
+    return 0;
+}
+
 static int poll_once(ConnectivityState *state, struct pollfd fds[],
     ErrorStatus fd_errors[], ErrorStatus *main_err) {
 
@@ -2601,6 +2651,8 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
         } // end for
     } // end else
 
+    try_unpause(state, fds, fd_errors, main_err);
+
     return 0;
 }
 
@@ -2693,7 +2745,7 @@ int main(int argc, char **argv) {
 #ifdef __TEST
 void __print_obuf(WriteBuf *obuf) {
     printf("OBUF\n", peer->sock);
-    printf("  obuf.total_written: %llu\n", obuf.total_written);
+    printf("  obuf.total_sent: %llu\n", obuf.total_sent);
     printf("  obuf.total_acked:   %llu\n", obuf.total_acked);
     printf("  obuf->w: %d\n", peer->obuf.w);
     printf("  obuf->r: %d\n", peer->obuf.r);
