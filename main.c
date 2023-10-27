@@ -611,6 +611,7 @@ static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
 
     // Perform write
     n_written = writev(sock, buf->vecbuf, n_seqs);
+    buf->total_written += n_written;
     printf("write to fd %d: %d bytes\n", sock, n_written);
     //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
     if (n_written == -1) {
@@ -1693,8 +1694,10 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
     peer->obuf.r = peer->obuf.a;
 
     peer->sync_received = true;
-    printf("SYNC-RECV on fd %d: %llu (acked=%llu, delta=%lld)\n",
-        peer->sock, peer_total_read, peer->obuf.total_acked, diff);
+    printf("SYNC-RECV on fd %d:\n", peer->sock);
+    printf("    obuf.total_written: %llu\n", peer->obuf.total_written);
+    printf("    peer_total_read:    %llu\n", peer_total_read);
+    printf("    obuf.total_acked:   %llu\n", peer->obuf.total_acked);
 
     return 0;
 }
@@ -1715,7 +1718,7 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
             // TODO [future work]: handle return value & fix cheap hack.
             // See comments for receive_peer_sync.
             receive_peer_sync(&state->peers[i], e);
-            fds[fd_i].events |= POLLOUT;
+            fds[fd_i].events = POLLIN | POLLOUT | POLLRDHUP;
         }
         break;
     case PSOCK_CONNECTING: // was connecting

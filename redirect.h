@@ -140,9 +140,10 @@ typedef struct {
     int r;
     int w;
     int a;
+    struct iovec vecbuf[2];
     unsigned long long last_acked;
     unsigned long long total_acked;
-    struct iovec vecbuf[2];
+    unsigned long long total_written;
 } WriteBuf;
 
 typedef struct {
