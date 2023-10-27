@@ -615,7 +615,6 @@ static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
 
     // Perform write
     n_written = writev(sock, buf->vecbuf, n_seqs);
-    buf->total_written += n_written;
     printf("write to fd %d: %d bytes\n", sock, n_written);
     //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
     if (n_written == -1) {
@@ -630,6 +629,7 @@ static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
 
     // Update read head based on how many bytes were successfully written
     buf->r = (buf->r + n_written) % buf->len;
+    buf->total_written += n_written;
 
     return n_written;
 }
@@ -1694,9 +1694,6 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
 
     diff = peer_total_read - peer->obuf.total_acked;
 
-    peer->obuf.a = (peer->obuf.a + diff) % peer->obuf.len;
-    peer->obuf.r = peer->obuf.a;
-
     peer->sync_received = true;
     printf("SYNC-RECV on fd %d:\n", peer->sock);
     printf("    obuf.total_written: %llu\n", peer->obuf.total_written);
@@ -1708,6 +1705,9 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
     printf("    obuf->w: %d\n", peer->obuf.w);
     printf("    obuf->r: %d\n", peer->obuf.r);
     printf("    obuf->a: %d\n", peer->obuf.a);
+
+    peer->obuf.a = (peer->obuf.a + diff) % peer->obuf.len;
+    peer->obuf.r = peer->obuf.a;
 
     return 0;
 }
