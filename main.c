@@ -2520,7 +2520,7 @@ static int try_unpause(ConnectivityState *state, struct pollfd fds[],
             // Still paused? Disable pollout.
             if (obuf_is_paused(&peer->obuf)) {
                 printf("PAUSE: disabled POLLOUT on fd %d\n", peer->sock);
-                fds[i + POLL_PSOCKS_OFF].events &= POLLOUT;
+                fds[i + POLL_PSOCKS_OFF].events &= ~POLLOUT;
             }
             // Unpaused: enable pollout
             else {
