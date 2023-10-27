@@ -141,16 +141,17 @@ typedef struct {
     int w;
     int a;
     struct iovec vecbuf[2];
+    bool is_paused;
     unsigned long long last_acked;
     unsigned long long total_acked;
-    unsigned long long total_written;
+    unsigned long long total_sent;
 } WriteBuf;
 
 typedef struct {
     char buf[PEER_BUF_LEN];
     int len;
     int w;
-    unsigned long long total_read; // ideally, matches obuf.last_acked
+    unsigned long long total_received; // ideally, matches obuf.last_acked
 } PktReadBuf;
 
 /* Peer: a device on the network running this software */
