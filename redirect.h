@@ -53,7 +53,7 @@ typedef enum {
 } PktDirection;
 
 typedef enum {
-    PKTTYPE_DATA = 0,
+    PKTTYPE_LC_DATA = 0,
     PKTTYPE_LC_NEW = 1,
     PKTTYPE_LC_ACK = 2,
     PKTTYPE_LC_CLOSE = 3

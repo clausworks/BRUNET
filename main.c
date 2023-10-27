@@ -413,7 +413,7 @@ static void print_pkthdr(PktHdr *hdr) {
         case PKTTYPE_LC_ACK:
             printf("LC_ACK");
             break;
-        case PKTTYPE_DATA:
+        case PKTTYPE_LC_DATA:
             printf("DATA");
             break;
         default:
@@ -1395,12 +1395,17 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
     }
 
     // Add LC to dictionary
-    if (dict_insert(state->log_conns, lc->id, lc, e) < 0) {
-        err_msg_prepend(e, "process_lc_new: ");
-        return -1;
+    if (dict_get(state->log_conns, lc->id, e) == NULL) {
+        if (dict_insert(state->log_conns, lc->id, lc, e) < 0) {
+            err_msg_prepend(e, "process_lc_new: ");
+            return -1;
+        }
+    }
+    else {
+        printf("Note: ignoring LC_NEW packet. LC already exists.\n");
+        return 0;
     }
 
-    // TODO: attempt connection to server
     // Handle later in poll
     // - Server connects
     // - Server refuses connection
@@ -1412,6 +1417,8 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
         // Note: is this a recoverable error? Would it result from running
         // conditions or a programming error? May just want to assert() and die
         // on failure.
+        err_show(e);
+        assert(0);
         return -1;
         // TODO: set interval on timer to repeat (auto retry)
     }
@@ -1459,11 +1466,10 @@ static int process_data_packet(ConnectivityState *state, struct pollfd fds[],
     // work could include a packet indicating a restart to possibly re-sync
     // LC IDs, or request other nodes restart their proxy programs as well.
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
-    assert(lc != NULL);
-    /*if (lc == NULL) {
-        err_msg_prepend(e, "cache_data: ");
-        return -1;
-    }*/
+    if (lc == NULL) {
+        printf("Note: ignored LC_DATA (LC doesn't exist)\n");
+        return 0;
+    }
     
     switch (hdr->dir) {
     case PKTDIR_FWD:
@@ -1499,8 +1505,8 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
-        err_msg_prepend(e, "cache_data: ");
-        return -1;
+        printf("Note: ignored LC_ACK (LC doesn't exist)\n");
+        return 0;
     }
     
     // An ACK packet moving backwards is for the forwards stream
@@ -1539,8 +1545,8 @@ static int process_lc_close(ConnectivityState *state, struct pollfd fds[],
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
-        err_msg_prepend(e, "cache_data: ");
-        return -1;
+        printf("Note: ignored LC_CLOSE (LC doesn't exist)\n");
+        return 0;
     }
 
     // If the packet received is BKWD, then this node is the client
@@ -1571,8 +1577,8 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
     print_pkthdr(hdr);
 
     switch (hdr->type) {
-    case PKTTYPE_DATA:
-        //printf("PKTTYPE_DATA\n");
+    case PKTTYPE_LC_DATA:
+        //printf("PKTTYPE_LC_DATA\n");
         return process_data_packet(state, fds, fd_i, e);
     case PKTTYPE_LC_NEW:
         //printf("PKTTYPE_LC_NEW\n");
@@ -2050,7 +2056,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 obuf_empty = obuf_get_empty(&peer->obuf);
                 if (obuf_empty >= pktlen) {
                     PktHdr hdr = {
-                        .type = PKTTYPE_DATA,
+                        .type = PKTTYPE_LC_DATA,
                         .lc_id = lc->id,
                         //set .dir later
                         //set .off later
