@@ -141,7 +141,7 @@ typedef struct {
     int w;
     int a;
     struct iovec vecbuf[2];
-    //bool is_paused;
+    bool is_paused;
     unsigned long long last_acked;
     unsigned long long total_acked;
     unsigned long long total_sent;

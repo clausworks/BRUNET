@@ -519,10 +519,9 @@ static int obuf_get_unacked(WriteBuf *buf) {
 
 static void obuf_close_cleanup(WriteBuf *buf) {
     buf->last_acked = 0;
-    //buf->is_paused = false;
+    buf->is_paused = false;
 }
 
-/*
 static void obuf_pause_for_acks(WriteBuf *buf) {
     buf->is_paused = true;
 }
@@ -530,7 +529,6 @@ static void obuf_pause_for_acks(WriteBuf *buf) {
 static bool obuf_is_paused(WriteBuf *buf) {
     return buf->is_paused;
 }
-*/
 
 /* Calculates the number of bytes acknowledged by TCP on the given socket and
  * updates the buffer's internal ack pointer accordingly. This frees up space in
@@ -575,7 +573,7 @@ static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStat
     buf->a = (buf->a + ack_increment) % buf->len;
     buf->total_acked += ack_increment;
 
-    //buf->is_paused = false;
+    buf->is_paused = false;
 
     printf("obuf_update_ack: a=%u, delta=%llu, total=%llu\n", buf->a,
         ack_increment, buf->total_acked);
@@ -2214,10 +2212,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
     else if (n_written == 0 && out_of_space) {
-        // everything written
-        //obuf_pause_for_acks(&peer->obuf);
-        //trigger_again = false;
-        // TODO: continue here........................................................................................
+        assert(obuf_get_unread(&peer->obuf) == 0);
+        obuf_pause_for_acks(&peer->obuf);
     }
 
     // Re-enabled POLLOUT if any data needs to be read
@@ -2512,7 +2508,6 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
 static int try_unpause(ConnectivityState *state, struct pollfd fds[],
     ErrorStatus fd_errors[], ErrorStatus *main_err) {
 
-    /*
     for (int i = 0; i < state->n_peers; ++i) { 
         PeerState *peer = &state->peers[i];
         if (obuf_is_paused(&peer->obuf)) {
@@ -2534,7 +2529,6 @@ static int try_unpause(ConnectivityState *state, struct pollfd fds[],
             }
         }
     }
-    */
 
     return 0;
 }
