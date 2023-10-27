@@ -1723,7 +1723,6 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
             // See comments for receive_peer_sync.
             receive_peer_sync(&state->peers[i], e);
             fds[fd_i].events = POLLIN | POLLOUT | POLLRDHUP;
-            exit_cleanly();
         }
         break;
     case PSOCK_CONNECTING: // was connecting
