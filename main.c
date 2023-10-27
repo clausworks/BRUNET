@@ -140,7 +140,7 @@ static int set_so_nodelay(int sock, ErrorStatus *e) {
 }
 
 static int set_so_timeout(int sock, ErrorStatus *e) {
-    unsigned to = 5; // number of seconds ti timeout
+    unsigned to = 5000; // number of seconds till timeout
     int status;
 
     status = setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT,
@@ -991,6 +991,8 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         fds[fd_i].events = POLLIN; // TODO: change this back at retry
         state->peers[i].sock = s;
         state->peers[i].sock_status = PSOCK_WAITING;
+        state->peers[i].sync_received = false;
+        state->peers[i].sync_sent = false;
         /*}
         else {
             state->peers[i].sock = -1;
