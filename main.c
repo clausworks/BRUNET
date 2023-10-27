@@ -525,7 +525,7 @@ static int obuf_get_unacked(WriteBuf *buf) {
 static void obuf_close_cleanup(WriteBuf *buf) {
     buf->last_acked = 0;
     printf("obuf_close_cleanup: %d unacked bytes\n", obuf_get_unacked(buf));
-    buf->r = buf->a;
+    //buf->r = buf->a;
 }
 
 /* Calculates the number of bytes acknowledged by TCP on the given socket and
@@ -2687,3 +2687,26 @@ int main(int argc, char **argv) {
 #endif
 }
 
+#ifdef __TEST
+void __print_obuf(WriteBuf *obuf) {
+    printf("OBUF\n", peer->sock);
+    printf("  obuf.total_written: %llu\n", obuf.total_written);
+    printf("  obuf.total_acked:   %llu\n", obuf.total_acked);
+    printf("  obuf->w: %d\n", peer->obuf.w);
+    printf("  obuf->r: %d\n", peer->obuf.r);
+    printf("  obuf->a: %d\n", peer->obuf.a);
+}
+
+void __test_obuf() {
+    char tmp[4096];
+    WriteBuf obuf;
+
+    obuf_init();
+    assert(obuf.w == 0);
+    assert(obuf.r == 0);
+    assert(obuf.a == 0);
+
+    ob
+}
+
+#endif
