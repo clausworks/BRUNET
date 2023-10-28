@@ -34,18 +34,18 @@ typedef enum {
     FDTYPE_TIMER
 } FDType;
 
-typedef enum {
+/*typedef enum {
     PEND_NONE = 0,
     PEND_LC_NEW = 1,
     PEND_LC_ACK = 2,
     PEND_LC_WILLCLOSE = 3,
     PEND_LC_EOD = 4
-} PendingCmd;
+} PendingCmd;*/
 
-typedef enum {
+/*typedef enum {
     PEND_NODATA = 0,
     PEND_DATA = 1
-} PendingData;
+} PendingData;*/
 
 typedef enum {
     PKTDIR_FWD = 0,
@@ -136,6 +136,8 @@ typedef struct {
         bool received_eod;
         bool sent_closed_wr;
         bool received_closed_wr;
+        bool fin_fwd;
+        bool fin_bkwd;
     } close_state;
     int usock_idx;
 } LogConn;
