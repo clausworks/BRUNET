@@ -978,6 +978,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERCLNT:
         printf("Shutdown both ends of user socket\n");
         shutdown(fds[fd_i].fd, SHUT_RDWR);
+        fds[fd_i].events &= ~(POLLOUT | POLLIN);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -990,6 +991,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERSERV:
         printf("Shutdown both ends of user socket\n");
         shutdown(fds[fd_i].fd, SHUT_RDWR);
+        fds[fd_i].events &= ~(POLLOUT | POLLIN);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -1227,7 +1229,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             obuf_reset(&state->user_clnt_conns[i].obuf);
             // Link user_clnt_conns entry from LC
             lc->usock_idx = i; 
-            // Set fd events
+            // TODO: enable POLLOUT?
             fds[i + POLL_UCSOCKS_OFF].events = POLLIN;// | POLLRDHUP;
             return 0;
         }
@@ -1622,10 +1624,12 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
     if (hdr->dir == PKTDIR_BKWD) {
         assert(lc->serv_id == peer_id); // non-SFN
         sock = fds[lc->usock_idx + POLL_UCSOCKS_OFF].fd;
+        fds[lc->usock_idx + POLL_UCSOCKS_OFF].events &= ~(POLLIN);
     }
     else {
         assert(lc->clnt_id == peer_id); // non-SFN
         sock = fds[lc->usock_idx + POLL_USSOCKS_OFF].fd;
+        fds[lc->usock_idx + POLL_UCSOCKS_OFF].events &= ~(POLLIN);
     }
 
     lc->close_state.received_closed_wr = true;
@@ -1914,7 +1918,6 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     unsigned lc_id;
     unsigned user_id;
     unsigned peer_id;
-    int sock;
 
     // Get direction
     switch (get_fd_type(state, fd_i)) {
@@ -1928,7 +1931,6 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
             }
             cache_hdr = lc->cache.bkwd.hdr_base;
             peer_id = lc->clnt_id;
-            sock = state->user_serv_conns[user_id].sock;
             printf("Writing to cache file: bkwd\n");
             break;
         case FDTYPE_USERCLNT:
@@ -1941,7 +1943,6 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
             }
             cache_hdr = lc->cache.fwd.hdr_base;
             peer_id = lc->serv_id;
-            sock = state->user_clnt_conns[user_id].sock;
             printf("Writing to cache file: fwd\n");
             break;
         default:
@@ -1954,7 +1955,8 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     if (read_len == 0) {
         // Send LC_EOD when all outgoing data has been sent
         printf("Hit EOF. Closing read end (fd %d)\n", fds[fd_i].fd);
-        shutdown(sock, SHUT_RD);
+        shutdown(fds[fd_i].fd, SHUT_RD);
+        fds[fd_i].events &= ~(POLLIN);
         lc->pend_pkt.lc_eod = true;
         //return handle_disconnect(state, fds, fd_i, e);
     }
@@ -1985,7 +1987,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
         lc->pend_pkt.lc_data = true;
     }
 
-    // Packets to send
+    // Packets to sendsock
     fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
 
     return 0;

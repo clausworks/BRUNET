@@ -64,6 +64,10 @@ static void _err_msg(ErrorStatus *e, char *fmt, va_list ap) {
 void err_msg(ErrorStatus *e, char *fmt, ...) {
     va_list ap;
 
+    if (e == NULL) {
+        return;
+    }
+
     va_start(ap, fmt);
     _err_msg(e, fmt, ap);
     va_end(ap);
@@ -73,6 +77,8 @@ void err_msg_prepend(ErrorStatus *e, char *fmt, ...) {
     char *prefix;
     va_list ap;
     unsigned nbytes1, nbytes2;
+
+    assert(e != NULL);
 
     va_start(ap, fmt);
     prefix = alloc_msg(fmt, ap);
@@ -104,6 +110,8 @@ void err_msg_append(ErrorStatus *e, char *fmt, ...) {
     va_list ap;
     unsigned nbytes1, nbytes2;
 
+    assert(e != NULL);
+
     va_start(ap, fmt);
     suffix = alloc_msg(fmt, ap);
     va_end(ap);
@@ -131,6 +139,10 @@ void err_msg_append(ErrorStatus *e, char *fmt, ...) {
 void err_msg_errno(ErrorStatus *e, char *fmt, ...) {
     va_list ap;
     int errnum = errno; // save current errno
+
+    if (e == NULL) {
+        return;
+    }
     
     va_start(ap, fmt);
     _err_msg(e, fmt, ap);
@@ -140,10 +152,14 @@ void err_msg_errno(ErrorStatus *e, char *fmt, ...) {
 }
 
 void err_init(ErrorStatus *e) {
+    assert(e != NULL);
+
     e->msg = NULL;
 }
 
 void err_free(ErrorStatus *e) {
+    assert(e != NULL);
+
     if (e->msg != NULL) {
         free(e->msg);
         e->msg = NULL;
