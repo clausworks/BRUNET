@@ -1230,7 +1230,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             // Link user_clnt_conns entry from LC
             lc->usock_idx = i; 
             // TODO: enable POLLOUT?
-            fds[i + POLL_UCSOCKS_OFF].events = POLLIN;// | POLLRDHUP;
+            fds[i + POLL_UCSOCKS_OFF].events = POLLIN | POLLRDHUP;
             return 0;
         }
     }
@@ -1462,7 +1462,7 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
     }
 
     // Add LC to dictionary
-    if (dict_get(state->log_conns, lc->id, e) == NULL) {
+    if (dict_get(state->log_conns, lc->id, NULL) == NULL) {
         if (dict_insert(state->log_conns, lc->id, lc, e) < 0) {
             err_msg_prepend(e, "process_lc_new: ");
             return -1;
@@ -2595,7 +2595,7 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
     switch (state->user_serv_conns[i].sock_status) {
     case USSOCK_CONNECTING: // was connecting
         //printf("handle_pollout_userserv: USSOCK_CONNECTING\n");
-        fds[fd_i].events = POLLIN;// | POLLRDHUP;
+        fds[fd_i].events = POLLIN | POLLRDHUP;
         // TODO: enable POLLOUT?
         state->user_serv_conns[i].sock_status = USSOCK_CONNECTED;
         printf("Connected (fd %d)\n", fds[fd_i].fd);
@@ -2685,14 +2685,10 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
         break;
     case FDTYPE_USERCLNT:
         printf("FDTYPE_USERCLNT POLLOUT\n");
-        // TODO: write data from LC
-        // handle_pollout_userclnt
-        // write data to user
         return handle_pollout_userclnt(state, fds, fd_i, e);
         break;
     case FDTYPE_USERSERV:
-        // a) Nonblocking connection attempt succeeded
-        // b) TODO: data to write
+        printf("FDTYPE_USERSERV POLLOUT\n");
         return handle_pollout_userserv(state, fds, fd_i, e);
     case FDTYPE_PEER:
         printf("FDTYPE_PEER POLLOUT\n");
@@ -2779,22 +2775,20 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             printf("\n------------------\n");
             print_sock_info(fds[i].fd);
 
-            // Event: hangup [can still read]
+            // Event: peer closed read end (can read till EOF)
             if (fds[i].revents & POLLHUP) {
                 --fd_remaining;
-                err_msg(e, "POLLHUP");
+                printf("POLLHUP\n");
                 handle_pollhup(state, fds, i, e);
-                continue;
             }
-            // Event: hangup (peer write end)
+            // Event: peer closed read end
             if (fds[i].revents & POLLRDHUP) {
                 --fd_remaining;
-                err_msg(e, "POLLRDHUP");
+                printf("POLLRDHUP\n");
                 handle_disconnect(state, fds, i, e);
-                continue;
             }
             // Event: fd not open
-            else if (fds[i].revents & POLLNVAL) {
+            if (fds[i].revents & POLLNVAL) {
                 --fd_remaining;
                 err_msg(e, "POLLNVAL");
                 // For this case, this is probably a bug and not the result of
@@ -2805,7 +2799,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 continue;
             }
             // Event: other error
-            else if (fds[i].revents & POLLERR) {
+            if (fds[i].revents & POLLERR) {
                 --fd_remaining;
                 err_msg(e, "POLLERR");
                 handle_disconnect(state, fds, i, e);
