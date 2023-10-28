@@ -2775,22 +2775,10 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             printf("\n------------------\n");
             print_sock_info(fds[i].fd);
 
-            // Event: peer closed read end (can read till EOF)
-            if (fds[i].revents & POLLHUP) {
-                --fd_remaining;
-                printf("POLLHUP\n");
-                handle_pollhup(state, fds, i, e);
-            }
-            // Event: peer closed read end
-            if (fds[i].revents & POLLRDHUP) {
-                --fd_remaining;
-                printf("POLLRDHUP\n");
-                handle_disconnect(state, fds, i, e);
-            }
             // Event: fd not open
             if (fds[i].revents & POLLNVAL) {
                 --fd_remaining;
-                err_msg(e, "POLLNVAL");
+                printf("POLLNVAL\n");
                 // For this case, this is probably a bug and not the result of
                 // weird runtime conditions. Disable any further events.
                 printf("Warning: disabled events on fds[%d]; fd was %d, now is -1.\n", i, fds[i].fd);
@@ -2804,6 +2792,18 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 err_msg(e, "POLLERR");
                 handle_disconnect(state, fds, i, e);
                 continue;
+            }
+            // Event: peer closed read end (can read till EOF)
+            if (fds[i].revents & POLLHUP) {
+                --fd_remaining;
+                printf("POLLHUP\n");
+                handle_pollhup(state, fds, i, e);
+            }
+            // Event: peer closed read end
+            if (fds[i].revents & POLLRDHUP) {
+                --fd_remaining;
+                printf("POLLRDHUP\n");
+                handle_disconnect(state, fds, i, e);
             }
 
             // Event: readable
