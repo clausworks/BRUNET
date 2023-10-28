@@ -1055,6 +1055,7 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
 
     case FDTYPE_USERCLNT:
         // Close half
+        printf("Closing write end (fd %d)\n", fds[fd_i].fd);
         shutdown(fds[fd_i].fd, SHUT_WR);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
@@ -1064,13 +1065,64 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         break;
 
     case FDTYPE_USERSERV:
-        printf("Closing socket (fd=%d)\n", fds[fd_i].fd);
         // Close half
+        printf("Closing write end (fd %d)\n", fds[fd_i].fd);
         shutdown(fds[fd_i].fd, SHUT_WR);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
         lc->pend_pkt.lc_closed_wr = true;
+        fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+        break;
+
+    case FDTYPE_PEER:
+        return handle_disconnect(state, fds, fd_i, e);
+        break;
+
+    }
+
+    return 0;
+}
+
+static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
+    int fd_i, ErrorStatus *e) {
+
+    int i; // relative index into approprate state->* array
+    LogConn *lc;
+
+    // Close socket
+
+    switch (get_fd_type(state, fd_i)) {
+
+    case FDTYPE_LISTEN:
+        return handle_disconnect(state, fds, fd_i, e);
+
+    case FDTYPE_TIMER:
+        return handle_disconnect(state, fds, fd_i, e);
+
+    case FDTYPE_USERCLNT:
+        // Close half
+        printf("Closing read end (fd %d)\n", fds[fd_i].fd);
+        shutdown(fds[fd_i].fd, SHUT_RD);
+        fds[fd_i].events &= ~(POLLIN);
+        i = fd_i - POLL_UCSOCKS_OFF;
+        lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
+        assert(lc != NULL);
+        // Stage packet and trigger a send
+        lc->pend_pkt.lc_eod = true;
+        fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+        break;
+
+    case FDTYPE_USERSERV:
+        // Close half
+        printf("Closing read end (fd %d)\n", fds[fd_i].fd);
+        shutdown(fds[fd_i].fd, SHUT_WR);
+        fds[fd_i].events &= ~(POLLIN);
+        i = fd_i - POLL_USSOCKS_OFF;
+        lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
+        assert(lc != NULL);
+        // Stage packet and trigger a send
+        lc->pend_pkt.lc_eod = true;
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
 
@@ -2735,16 +2787,16 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
 
     static unsigned _poll_num_iter = 0;
 
-    int poll_status;
-    bool did_rw;
+    int status;
+    bool handled_fd;
     int fd_remaining;
 
     printf("\n\n========== POLL ========== #%u\n", _poll_num_iter++);
-    poll_status = poll(fds, POLL_NUM_FDS, -1);
-    printf("(poll returned: %d fds)\n", poll_status);
+    status = poll(fds, POLL_NUM_FDS, -1);
+    printf("(poll returned: %d fds)\n", status);
 
     // Handle errors
-    if (poll_status <= -1) {
+    if (status <= -1) {
         // spurious errors
         if (errno == EINTR || errno == EAGAIN) {
             return 0; // retry later
@@ -2754,7 +2806,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             return -1;
         }
     }
-    else if (poll_status == 0) {
+    else if (status == 0) {
         /* should not happen, we requested infinite wait */
         err_msg(main_err, "poll timed out");
         return -1;
@@ -2762,10 +2814,10 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
     // Process fd events
     else {
         // Check each fd for events
-        fd_remaining = poll_status;
+        fd_remaining = status;
         for (int i = 0; i < POLL_NUM_FDS && fd_remaining > 0; ++i) {
             ErrorStatus *e = &fd_errors[i];
-            did_rw = false;
+            handled_fd = false;
 
             // No event. Just skip this fd.
             if (fds[i].revents == 0) {
@@ -2783,44 +2835,70 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 // weird runtime conditions. Disable any further events.
                 printf("Warning: disabled events on fds[%d]; fd was %d, now is -1.\n", i, fds[i].fd);
                 assert(0); // TODO: remove this and actually handle the error
-                handle_disconnect(state, fds, i, e);
+                status = handle_disconnect(state, fds, i, e);
+                if (status < 0) {
+                    err_show(e);
+                    err_reset(e);
+                }
                 continue;
             }
-            // Event: other error
+
+            // Event: socket closed
             if (fds[i].revents & POLLERR) {
                 --fd_remaining;
                 err_msg(e, "POLLERR");
                 handle_disconnect(state, fds, i, e);
+                if (status < 0) {
+                    err_show(e);
+                    err_reset(e);
+                }
                 continue;
             }
-            // Event: peer closed read end (can read till EOF)
-            if (fds[i].revents & POLLHUP) {
-                --fd_remaining;
-                printf("POLLHUP\n");
-                handle_pollhup(state, fds, i, e);
-            }
-            // Event: peer closed read end
-            if (fds[i].revents & POLLRDHUP) {
-                --fd_remaining;
-                printf("POLLRDHUP\n");
-                handle_disconnect(state, fds, i, e);
-            }
 
+            // The four following events are not all mutually exclusive. Handle
+            // as many as possible.
+
+            // Event: peer closed its end of the channel.
+            // Can read still until EOF.
+            if (fds[i].revents & POLLHUP) {
+                handled_fd = true;
+                printf("POLLHUP\n");
+                status = handle_pollhup(state, fds, i, e);
+                if (status < 0) {
+                    err_show(e);
+                    err_reset(e);
+                }
+            }
+            // Event: peer closed writing half of connection
+            if (fds[i].revents & POLLRDHUP) {
+                handled_fd = true;
+                printf("POLLRDHUP\n");
+                status = handle_pollrdhup(state, fds, i, e);
+                if (status < 0) {
+                    err_show(e);
+                    err_reset(e);
+                }
+            }
             // Event: readable
             if (fds[i].revents & POLLIN) {
-                did_rw = true;
+                handled_fd = true;
                 handle_pollin(state, fds, i, e);
-                //if (handle_pollin(state, fds, i, e) < 0) {
-                    //err_show(e);
-                //}
+                if (status < 0) {
+                    err_show(e);
+                    err_reset(e);
+                }
             }
             // Event: writable
             if (fds[i].revents & POLLOUT) {
-                did_rw = true;
-                handle_pollout(state, fds, i, e);
+                handled_fd = true;
+                status = handle_pollout(state, fds, i, e);
+                if (status < 0) {
+                    err_show(e);
+                    err_reset(e);
+                }
             }
 
-            if (!did_rw) {
+            if (!handled_fd) {
                 err_msg(e, "Unhandled event: revents=%x\n", fds[i].revents);
             }
             else {
@@ -2896,10 +2974,10 @@ int main(int argc, char **argv) {
         }
 
         // Print any errors (TODO: make this more efficient)
-        for (int i = 0; i < POLL_NUM_FDS; ++i) {
+        /*for (int i = 0; i < POLL_NUM_FDS; ++i) {
             err_show_if_present(fd_errors + i);
             err_reset(fd_errors + i);
-        }
+        }*/
     }
 
     for (int i = 0; i < POLL_NUM_FDS; ++i) {
