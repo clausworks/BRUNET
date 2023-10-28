@@ -39,7 +39,7 @@ typedef enum {
     PEND_LC_NEW = 1,
     PEND_LC_ACK = 2,
     PEND_LC_WILLCLOSE = 3,
-    PEND_LC_CLOSE = 4
+    PEND_LC_EOD = 4
 } PendingCmd;
 
 typedef enum {
@@ -56,7 +56,8 @@ typedef enum {
     PKTTYPE_LC_DATA = 0,
     PKTTYPE_LC_NEW = 1,
     PKTTYPE_LC_ACK = 2,
-    PKTTYPE_LC_CLOSE = 3
+    PKTTYPE_LC_EOD = 3,
+    PKTTYPE_LC_CLOSED_WR = 4
 } PktType;
 
 
@@ -121,9 +122,21 @@ typedef struct {
     unsigned serv_id;
     in_port_t serv_port;
     Cache cache;
-    PendingCmd pending_cmd[POLL_NUM_PSOCKS]; // same as type field of PktHdr
-    PendingData pending_data[POLL_NUM_PSOCKS];
-    bool received_close;
+    struct {
+        bool lc_new;
+        bool lc_ack;
+        bool lc_data;
+        bool lc_eod;
+        bool lc_closed_wr;
+    } pend_pkt; // TODO: SFN case - array, one pending struct per peer
+    //PendingCmd pending_cmd[POLL_NUM_PSOCKS]; // same as type field of PktHdr
+    //PendingData pending_data[POLL_NUM_PSOCKS];
+    struct {
+        bool sent_eod;
+        bool received_eod;
+        bool sent_closed_wr;
+        bool received_closed_wr;
+    } close_state;
     int usock_idx;
 } LogConn;
 
