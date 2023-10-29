@@ -2239,7 +2239,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 fdtype = FDTYPE_USERCLNT;
             }
             else if (lc->clnt_id == peer_id) {
-                fdtype = FDTYPE_USERCLNT;
+                fdtype = FDTYPE_USERSERV;
             }
             else {
                 assert(0); // should be one of the two options above
@@ -2311,9 +2311,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         // ACK bytes from fwd stream
                         f = lc->cache.fwd.hdr_base;
                     }
-                    else {
-                        assert(0); // Should not reach in non-SFN case
-                    }
 
                     hdr.off = cachefile_get_ack(f);
                     // TODO: update ack when obuf ack for user sock updates
@@ -2358,9 +2355,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     else if (lc->clnt_id == peer_id) {
                         hdr.dir = PKTDIR_BKWD;
                         f = lc->cache.bkwd.hdr_base;
-                    }
-                    else {
-                        assert(0); // Should not reach in non-SFN case
                     }
 
                     // Get avail. num bytes in cache
