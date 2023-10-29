@@ -441,6 +441,9 @@ static void print_pkthdr(PktHdr *hdr) {
         case PKTTYPE_LC_EOD:
             printf("LC_EOD");
             break;
+        case PKTTYPE_LC_CLOSED_WR:
+            printf("LC_CLOSED_WR");
+            break;
         case PKTTYPE_LC_ACK:
             printf("LC_ACK");
             break;
@@ -452,10 +455,10 @@ static void print_pkthdr(PktHdr *hdr) {
     }
     switch (hdr->dir) {
         case PKTDIR_FWD:
-            printf("(clnt->serv)");
+            printf(" (clnt->serv)");
             break;
         case PKTDIR_BKWD:
-            printf("(serv->clnt)");
+            printf(" (serv->clnt)");
             break;
         default:
             assert(0);
