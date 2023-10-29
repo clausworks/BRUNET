@@ -1817,7 +1817,7 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
         lc->close_state.fin_wr = true;
         printf(">> fin_wr\n");
         // Trigger EOF on socket
-        if (shutdown(fds[fd_i].fd, SHUT_WR) < 0) {
+        if (shutdown(sock, SHUT_WR) < 0) {
             err_msg_errno(e, "shutdown");
             return -1;
         }
