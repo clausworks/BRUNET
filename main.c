@@ -470,7 +470,7 @@ static void print_pkthdr(PktHdr *hdr) {
     }
     printf(": lc_id=%llu, ", hdr->lc_id);
     printf("off=%llu, ", hdr->off);
-    printf("len=%hu ###\n", hdr->len);
+    printf("len=%hu\n", hdr->len);
 }
 
 
@@ -1816,7 +1816,11 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
     if (cachefile_get_unacked(f) == 0) {
         lc->close_state.fin_wr = true;
         printf(">> fin_wr\n");
-        //shutdown(..., SHUT_WR); // trigger EOF?
+        // Trigger EOF on socket
+        if (shutdown(fds[fd_i].fd, SHUT_WR) < 0) {
+            err_msg_errno(e, "shutdown");
+            return -1;
+        }
         if (try_close_lc(state, lc, fdtype, e) < 0) {
             return -1;
         }
@@ -2704,11 +2708,15 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         // been read from the cache and sent to the user socket. 
         lc->close_state.fin_wr = true;
         printf(">> fin_wr\n");
+        // trigger EOF on user sock
+        if (shutdown(fds[fd_i].fd, SHUT_WR) < 0) {
+            err_msg_errno(e, "shutdown");
+            return -1;
+        }
         // Close half of cache
         if (try_close_lc(state, lc, fdtype, e) < 0) {
             return -1;
         }
-        //shutdown(fds[fd_i].fd, SHUT_WR);
     }
 
     // TODO: make sure we never send duplicate bytes
