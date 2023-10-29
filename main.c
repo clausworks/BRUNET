@@ -486,8 +486,6 @@ static void lc_set_id(LogConn *lc, unsigned inst, unsigned clnt_id) {
 static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) {
     LogConn *lc;
 
-    int *sock;
-
     printf("lc_destroy\n");
 
     lc = dict_pop(state->log_conns, lc_id, e);
@@ -495,17 +493,6 @@ static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) 
         err_msg_prepend(e, "lc_destroy failed: ");
         return -1;
     }
-
-    if (state->this_dev_id == lc->clnt_id) {
-        sock = &state->user_clnt_conns[lc->usock_idx].sock;
-    }
-    else {
-        sock = &state->user_serv_conns[lc->usock_idx].sock;
-        state->user_serv_conns[lc->usock_idx].sock_status = USSOCK_INVALID;
-    }
-
-    close(*sock);
-    *sock = -1;
 
     if (cache_close(&lc->cache, e) < 0) {
         err_msg_prepend(e, "lc_destroy failed: ");
@@ -978,6 +965,25 @@ static int create_reconnect_timer(ErrorStatus *e) {
     return timerfd;
 }
 
+static void close_user_sock(ConnectivityState *state, FDType fdtype,
+    int usock_idx, ErrorStatus *e) {
+
+    switch (fdtype) {
+    case FDTYPE_USERCLNT:
+        close(state->user_clnt_conns[usock_idx].sock);
+        state->user_clnt_conns[usock_idx].sock = -1;
+        break;
+    case FDTYPE_USERSERV:
+        close(state->user_serv_conns[usock_idx].sock);
+        state->user_serv_conns[usock_idx].sock = -1;
+        state->user_serv_conns[usock_idx].sock_status = USSOCK_INVALID;
+        break;
+    default:
+        assert(0);
+    }
+}
+
+
 /* Error at the connection level that results in an invalid connection. Close
  * the connection and update the appropriate lists so that it's no longer
  * polled.
@@ -1089,25 +1095,31 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         return handle_disconnect(state, fds, fd_i, e);
 
     case FDTYPE_USERCLNT:
-        // Close half
         printf("Closing write end (fd %d)\n", fds[fd_i].fd);
-        //shutdown(fds[fd_i].fd, SHUT_WR);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
+        // Stage a packet to signal close to peer
         lc->pend_pkt.lc_closed_wr = true;
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+        // If we already hit EOF, go ahead and close the socket
+        if (lc->pend_pkt.lc_eod || lc->close_state.sent_eod) {
+            close_user_sock(state, FDTYPE_USERCLNT, i, e);
+        }
         break;
 
     case FDTYPE_USERSERV:
-        // Close half
         printf("Closing write end (fd %d)\n", fds[fd_i].fd);
-        //shutdown(fds[fd_i].fd, SHUT_WR);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
+        // Stage a packet to signal close to peer
         lc->pend_pkt.lc_closed_wr = true;
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+        // If we already hit EOF, go ahead and close the socket
+        if (lc->pend_pkt.lc_eod || lc->close_state.sent_eod) {
+            close_user_sock(state, FDTYPE_USERSERV, i, e);
+        }
         break;
 
     case FDTYPE_PEER:
@@ -1748,6 +1760,7 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
     CacheFileHeader *f;
     int sock;
+    FDType fdtype;
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
@@ -1757,12 +1770,14 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
 
     // If the packet received is BKWD, then this node is the client
     if (hdr->dir == PKTDIR_BKWD) {
+        fdtype = FDTYPE_USERCLNT;
         f = lc->cache.bkwd.hdr_base; // EOD is for bkwd
         assert(lc->serv_id == peer_id); // non-SFN
         fds[lc->usock_idx + POLL_UCSOCKS_OFF].events |= POLLOUT;
         sock = state->user_clnt_conns[lc->clnt_id].sock;
     }
     else {
+        fdtype = FDTYPE_USERSERV;
         f = lc->cache.fwd.hdr_base; // EOD is for fwd
         assert(lc->clnt_id == peer_id); // non-SFN
         fds[lc->usock_idx + POLL_USSOCKS_OFF].events |= POLLOUT;
@@ -1771,15 +1786,20 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
 
     lc->close_state.received_eod = true;
 
-    // If cache is flushed and mark it as half-closed
+    // Check if cache is flushed (done writing to user sock)
     if (cachefile_get_unacked(f) == 0) {
-        //shutdown(sock, SHUT_WR);
         printf("Finished processing EOD. Closed write end (fd=%d)\n", sock);
         if (hdr->dir == PKTDIR_BKWD) {
             lc_finish_bkwd(state, lc, e);
         }
         else {
             lc_finish_fwd(state, lc, e);
+        }
+        // Done reading?
+        if (lc->close_state.pend_pkt.lc_eod
+            || lc->close_state.sent_eod
+            || lc->close_state.received_closed_wr) {
+            close_user_sock(state, fdtype, lc->usock_idx, e);
         }
         if (lc->close_state.fin_bkwd && lc->close_state.fin_fwd) {
             if (lc_destroy(state, lc->id, e) < 0) {
@@ -2043,16 +2063,12 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     read_len = read(fds[fd_i].fd, buf, PKT_MAX_PAYLOAD_LEN);
     // EOF
     if (read_len == 0) {
-        // Send LC_EOD when all outgoing data has been sent
-        /*
+        // Stage a packet to be sent when cache is emptied
         printf("Hit EOF. Closing read end (fd %d)\n", fds[fd_i].fd);
-        shutdown(fds[fd_i].fd, SHUT_RD);
         fds[fd_i].events &= ~(POLLIN);
         lc->pend_pkt.lc_eod = true;
-        */
-        printf("Hit EOF. Doing nothing.\n");
+        fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         return 0;
-        //return handle_disconnect(state, fds, fd_i, e);
     }
     // Error
     else if (read_len < 0) {
@@ -2079,10 +2095,10 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
 
         // Trigger pollout on destination socket (non-SFN)
         lc->pend_pkt.lc_data = true;
-    }
 
-    // Packets to sendsock
-    fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+        // Packets to sendsock
+        fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
+    }
 
     return 0;
 }
@@ -2397,6 +2413,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         print_pkthdr(&hdr);
                         copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
 
+                        // Adjust flags 
                         lc->pend_pkt.lc_eod = false;
                         lc->close_state.sent_eod = true;
                         // Flag cache as half-closed
@@ -2405,6 +2422,25 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         }
                         else {
                             lc_finish_bkwd(state, lc, e);
+                        }
+                        // Close socket that received EOF, but only if the write
+                        // end has been closed already. Otherwise, we have to
+                        // wait till the peer sends us EOD for the other stream.
+                        //
+                        // Sending EOD means we're done reading from the user
+                        // socket. Close the socket if we're done writing.
+                        if (lc->pend_pkt.lc_closed_wr
+                            || lc->close_state.sent_closed_wr
+                            || lc->received_eod) { // FIXME: we can only check
+                            // this AFTER the cache is flushed
+                            if (lc->serv_id == peer_id) {
+                                close_user_sock(state, FDTYPE_USERCLNT,
+                                    lc->usock_idx, e);
+                            }
+                            else if (lc->clnt_id == peer_id) {
+                                close_user_sock(state, FDTYPE_USERSERV,
+                                    lc->usock_idx, e);
+                            }
                         }
                     }
                     else {
