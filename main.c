@@ -1010,8 +1010,9 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         return -1;
 
     case FDTYPE_USERCLNT:
-        printf("Shutdown both ends of user socket\n");
-        shutdown(fds[fd_i].fd, SHUT_RDWR);
+        printf("Closed user socket\n");
+        //shutdown(fds[fd_i].fd, SHUT_RDWR);
+        close(fds[fd_i].fd);
         fds[fd_i].events &= ~(POLLOUT | POLLIN);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
@@ -1773,7 +1774,7 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
     // If cache is flushed and mark it as half-closed
     if (cachefile_get_unacked(f) == 0) {
         shutdown(sock, SHUT_WR);
-        printf("Finished processing EOD. Closed write end (fd=%d)\n", fds[fd_i].fd);
+        printf("Finished processing EOD. Closed write end (fd=%d)\n", sock);
         if (hdr->dir == PKTDIR_BKWD) {
             lc_finish_bkwd(state, lc, e);
         }
@@ -2271,6 +2272,84 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 }
             }
 
+            // PACKET: DATA PACKET
+            if (lc->pend_pkt.lc_data && !lc->close_state.received_closed_wr) {
+                char buf[PKT_MAX_PAYLOAD_LEN];
+                long long unsigned paylen;
+                long long unsigned obuf_empty;
+                CacheFileHeader *f;
+
+                assert(!lc->pend_pkt.lc_new);
+                
+                pktlen = sizeof(PktHdr) + 1; // minimum packet size
+
+                obuf_empty = obuf_get_empty(&peer->obuf);
+                if (obuf_empty >= pktlen) {
+                    PktHdr hdr = {
+                        .type = PKTTYPE_LC_DATA,
+                        .lc_id = lc->id,
+                        //set .dir later
+                        //set .off later
+                        //set .len later
+                    };
+
+                    // Determine direction (peer_id is destination)
+                    if (lc->serv_id == peer_id) {
+                        hdr.dir = PKTDIR_FWD;
+                        f = lc->cache.fwd.hdr_base;
+                    }
+                    else if (lc->clnt_id == peer_id) {
+                        hdr.dir = PKTDIR_BKWD;
+                        f = lc->cache.bkwd.hdr_base;
+                    }
+                    else {
+                        assert(0); // Should not reach in non-SFN case
+                    }
+
+                    // Get avail. num bytes in cache
+                    paylen = cachefile_get_readlen(f, peer_id);
+                    printf("cachefile_get_readlen: %llu\n", paylen);
+                    if (PKT_MAX_PAYLOAD_LEN < paylen) {
+                        paylen = PKT_MAX_PAYLOAD_LEN;
+                        out_of_space = true;
+                    }
+                    // Check total packet size
+                    // Note: we know paylen will be positive because obuf_empty
+                    // is at least the header length + 1.
+                    if (obuf_empty < paylen + sizeof(PktHdr)) {
+                        paylen = obuf_empty - sizeof(PktHdr);
+                        out_of_space = true;
+                    }
+                    // This should always succeed, since paylen <= readlen
+                    hdr.off = cachefile_get_read(f, peer_id);
+                    assert(paylen == cachefile_read(f, peer_id, buf, paylen, e));
+                    printf("cachefile_get_read [src]: %llu\n",
+                    cachefile_get_read(f, peer_id));
+
+                    hdr.len = paylen; // payload length
+
+                    // Copy header, payload to output buffer
+                    print_pkthdr(&hdr);
+                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+                    copy_to_obuf(&peer->obuf, buf, paylen);
+
+                    if (out_of_space) {
+                        // re-enabled pollout
+                        //lc->pending_data[peer_id] = PEND_DATA;
+                        lc->pend_pkt.lc_data = true;
+                    }
+                    else {
+                        // don't disable pollout, in case another LC enabled it
+                        //lc->pending_data[peer_id] = PEND_NODATA;
+                        lc->pend_pkt.lc_data = false;
+                    }
+                }
+                else {
+                    out_of_space = true;
+                }
+            }
+
+            
             // PACKET: LC_EOD
             // We can only send LC_EOD once the data has all been sent and
             // acked.
@@ -2380,86 +2459,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             }
 
 
-            // PACKET: DATA PACKET
-            // This should go last because it'll be the biggest packet and will
-            // try to fill up any empty space. 
-            if (lc->pend_pkt.lc_data && !lc->close_state.received_closed_wr) {
-                char buf[PKT_MAX_PAYLOAD_LEN];
-                long long unsigned paylen;
-                long long unsigned obuf_empty;
-                CacheFileHeader *f;
-
-                assert(!lc->pend_pkt.lc_new);
-                
-                pktlen = sizeof(PktHdr) + 1; // minimum packet size
-
-                obuf_empty = obuf_get_empty(&peer->obuf);
-                if (obuf_empty >= pktlen) {
-                    PktHdr hdr = {
-                        .type = PKTTYPE_LC_DATA,
-                        .lc_id = lc->id,
-                        //set .dir later
-                        //set .off later
-                        //set .len later
-                    };
-
-                    // Determine direction (peer_id is destination)
-                    if (lc->serv_id == peer_id) {
-                        hdr.dir = PKTDIR_FWD;
-                        f = lc->cache.fwd.hdr_base;
-                    }
-                    else if (lc->clnt_id == peer_id) {
-                        hdr.dir = PKTDIR_BKWD;
-                        f = lc->cache.bkwd.hdr_base;
-                    }
-                    else {
-                        assert(0); // Should not reach in non-SFN case
-                    }
-
-                    // Get avail. num bytes in cache
-                    paylen = cachefile_get_readlen(f, peer_id);
-                    printf("cachefile_get_readlen: %llu\n", paylen);
-                    if (PKT_MAX_PAYLOAD_LEN < paylen) {
-                        paylen = PKT_MAX_PAYLOAD_LEN;
-                        out_of_space = true;
-                    }
-                    // Check total packet size
-                    // Note: we know paylen will be positive because obuf_empty
-                    // is at least the header length + 1.
-                    if (obuf_empty < paylen + sizeof(PktHdr)) {
-                        paylen = obuf_empty - sizeof(PktHdr);
-                        out_of_space = true;
-                    }
-                    // This should always succeed, since paylen <= readlen
-                    hdr.off = cachefile_get_read(f, peer_id);
-                    assert(paylen == cachefile_read(f, peer_id, buf, paylen, e));
-                    printf("cachefile_get_read [src]: %llu\n",
-                    cachefile_get_read(f, peer_id));
-
-                    hdr.len = paylen; // payload length
-
-                    // Copy header, payload to output buffer
-                    print_pkthdr(&hdr);
-                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
-                    copy_to_obuf(&peer->obuf, buf, paylen);
-
-                    if (out_of_space) {
-                        // re-enabled pollout
-                        //lc->pending_data[peer_id] = PEND_DATA;
-                        lc->pend_pkt.lc_data = true;
-                    }
-                    else {
-                        // don't disable pollout, in case another LC enabled it
-                        //lc->pending_data[peer_id] = PEND_NODATA;
-                        lc->pend_pkt.lc_data = false;
-                    }
-                }
-                else {
-                    out_of_space = true;
-                }
-            }
-
-            
             // TODO: prioritize LCs that have new data
             
             // TODO [future work]: simple priority queue implementation idea:
