@@ -161,7 +161,7 @@ static int set_so_timeout(int sock, ErrorStatus *e) {
     return 0;
 }
 
-static int set_so_keepalive(int sock, ErrorStatus *e) {
+/*static int set_so_keepalive(int sock, ErrorStatus *e) {
     int value;
     int status;
 
@@ -190,7 +190,7 @@ static int set_so_keepalive(int sock, ErrorStatus *e) {
         return -1;
     }
     return 0;
-}
+}*/
 
 
 /* static int set_so_quickack(int sock, ErrorStatus *e) {
@@ -1358,9 +1358,9 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             lc->usock_idx = i; 
             // TODO: enable POLLOUT?
             fds[i + POLL_UCSOCKS_OFF].events = POLLIN;// | POLLRDHUP;
-            if (set_so_keepalive(sock, e) < 0) {
+            /*if (set_so_keepalive(sock, e) < 0) {
                 return -1;
-            }
+            }*/
             return 0;
         }
     }
@@ -1800,13 +1800,13 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
         fdtype = FDTYPE_USERCLNT;
         f = lc->cache.bkwd.hdr_base; // EOD is for bkwd
         assert(lc->serv_id == peer_id); // non-SFN
-        sock = state->user_clnt_conns[lc->clnt_id].sock;
+        sock = state->user_clnt_conns[lc->usock_idx].sock;
     }
     else {
         fdtype = FDTYPE_USERSERV;
         f = lc->cache.fwd.hdr_base; // EOD is for fwd
         assert(lc->clnt_id == peer_id); // non-SFN
-        sock = state->user_serv_conns[lc->serv_id].sock;
+        sock = state->user_serv_conns[lc->usock_idx].sock;
     }
 
     lc->close_state.received_eod = true;
@@ -2747,9 +2747,9 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
         fds[fd_i].events = POLLIN;// | POLLRDHUP;
         // TODO: enable POLLOUT?
         state->user_serv_conns[i].sock_status = USSOCK_CONNECTED;
-        if (set_so_keepalive(fds[fd_i].fd, e) < 0) {
+        /*if (set_so_keepalive(fds[fd_i].fd, e) < 0) {
             return -1;
-        }
+        }*/
         printf("Connected (fd %d)\n", fds[fd_i].fd);
         break;
     case USSOCK_CONNECTED: // already connected, data to write
