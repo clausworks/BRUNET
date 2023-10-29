@@ -33,6 +33,7 @@ void exit_cleanly() {
 }
 
 void exit_sighandler(int sig) {
+    // TODO: cleanup LC dict
     exit_cleanly();
 }
 
@@ -54,6 +55,10 @@ void init_sighandlers() {
         perror("sigaddset");
         exit(EXIT_FAILURE);
     }
+    /*if (0 != sigaddset(&(sa.sa_mask), SIGABRT)) {
+        perror("sigaddset");
+        exit(EXIT_FAILURE);
+    }*/
 
     sa.sa_flags = 0;
 
@@ -67,7 +72,7 @@ void init_sighandlers() {
         exit(EXIT_FAILURE);
     }
     // For assert:
-    if (0 != sigaction(SIGTERM, &sa, NULL)) {
+    if (0 != sigaction(SIGABRT, &sa, NULL)) {
         perror("sigaction");
         exit(EXIT_FAILURE);
     }
@@ -2519,22 +2524,26 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
         // We use a goto here so "goto advance" is like "continue"
 //advance:
-        // TODO: what happens when this gets to the end of the list?
-        // Advance LC iterator
-        if (!dict_iter_hasnext(peer->lc_iter)) {
-            break;
-        }
-        else {
-            peer->lc_iter = dict_iter_next(peer->lc_iter);
-        }
-
         // Destroy LC if it's marked as finished for read and write to user sock
         // We need to do this AFTER the iterator has advanced. Destroying the LC
         // causes it to be removed from the linked list, which could messes up the
         // iterator if it's removed.
-        if (try_close_lc(state, lc, fdtype, e) < 0) {
-            return -1;
+        
+        // TODO: what happens when this gets to the end of the list?
+        // Advance LC iterator
+        if (!dict_iter_hasnext(peer->lc_iter)) {
+            if (try_close_lc(state, lc, fdtype, e) < 0) {
+                return -1;
+            }
+            break;
         }
+        else {
+            peer->lc_iter = dict_iter_next(peer->lc_iter);
+            if (try_close_lc(state, lc, fdtype, e) < 0) {
+                return -1;
+            }
+        }
+
     } // end while for LCs
 
     if (out_of_space) {
