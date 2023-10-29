@@ -489,7 +489,7 @@ static void lc_finish_fwd(ConnectivityState *state, LogConn *lc, ErrorStatus *e)
 
 static void lc_finish_bkwd(ConnectivityState *state, LogConn *lc, ErrorStatus *e) {
     printf("lc_finish_bkwd\n");
-    lc->close_state.fin_fwd = true;
+    lc->close_state.fin_bkwd = true;
 }
 
 /******************************************************************************
@@ -959,7 +959,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     LogConn *lc;
 
     // Close socket
-    printf("Closing socket (fd=%d)\n", fds[fd_i].fd);
+    printf("Handling disconnect (fd=%d)\n", fds[fd_i].fd);
 
     switch (get_fd_type(state, fd_i)) {
 
@@ -1104,7 +1104,7 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
         // Close half
         printf("Closing read end (fd %d)\n", fds[fd_i].fd);
         shutdown(fds[fd_i].fd, SHUT_RD);
-        fds[fd_i].events &= ~(POLLIN);
+        fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -1117,7 +1117,7 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
         // Close half
         printf("Closing read end (fd %d)\n", fds[fd_i].fd);
         shutdown(fds[fd_i].fd, SHUT_WR);
-        fds[fd_i].events &= ~(POLLIN);
+        fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -2846,8 +2846,8 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             // Event: socket closed
             if (fds[i].revents & POLLERR) {
                 --fd_remaining;
-                err_msg(e, "POLLERR");
-                handle_disconnect(state, fds, i, e);
+                printf("POLLERR\n");
+                status = handle_disconnect(state, fds, i, e);
                 if (status < 0) {
                     err_show(e);
                     err_reset(e);
