@@ -1025,7 +1025,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
 
     case FDTYPE_USERSERV:
         printf("Shutdown both ends of user socket\n");
-        shutdown(fds[fd_i].fd, SHUT_RDWR);
+        //shutdown(fds[fd_i].fd, SHUT_RDWR);
         fds[fd_i].events &= ~(POLLOUT | POLLIN);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
@@ -1091,7 +1091,7 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERCLNT:
         // Close half
         printf("Closing write end (fd %d)\n", fds[fd_i].fd);
-        shutdown(fds[fd_i].fd, SHUT_WR);
+        //shutdown(fds[fd_i].fd, SHUT_WR);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -1102,7 +1102,7 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERSERV:
         // Close half
         printf("Closing write end (fd %d)\n", fds[fd_i].fd);
-        shutdown(fds[fd_i].fd, SHUT_WR);
+        //shutdown(fds[fd_i].fd, SHUT_WR);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -1138,7 +1138,7 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERCLNT:
         // Close half
         printf("Closing read end (fd %d)\n", fds[fd_i].fd);
-        shutdown(fds[fd_i].fd, SHUT_RD);
+        //shutdown(fds[fd_i].fd, SHUT_RD);
         fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
@@ -1151,7 +1151,7 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERSERV:
         // Close half
         printf("Closing read end (fd %d)\n", fds[fd_i].fd);
-        shutdown(fds[fd_i].fd, SHUT_WR);
+        //shutdown(fds[fd_i].fd, SHUT_WR);
         fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
@@ -1703,7 +1703,7 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
 
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
-    int sock;
+    //int sock;
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
@@ -1713,18 +1713,18 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
 
     if (hdr->dir == PKTDIR_BKWD) {
         assert(lc->serv_id == peer_id); // non-SFN
-        sock = fds[lc->usock_idx + POLL_UCSOCKS_OFF].fd;
+        //sock = fds[lc->usock_idx + POLL_UCSOCKS_OFF].fd;
         fds[lc->usock_idx + POLL_UCSOCKS_OFF].events &= ~(POLLIN);
     }
     else {
         assert(lc->clnt_id == peer_id); // non-SFN
-        sock = fds[lc->usock_idx + POLL_USSOCKS_OFF].fd;
+        //sock = fds[lc->usock_idx + POLL_USSOCKS_OFF].fd;
         fds[lc->usock_idx + POLL_UCSOCKS_OFF].events &= ~(POLLIN);
     }
 
     lc->close_state.received_closed_wr = true;
     printf("Other side closed write end. Closing read end (fd %d)\n", fds[fd_i].fd);
-    shutdown(sock, SHUT_RD);
+    //shutdown(sock, SHUT_RD);
     // Mark cache as half-closed
     if (hdr->dir == PKTDIR_FWD) {
         lc_finish_bkwd(state, lc, e);
@@ -1773,7 +1773,7 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
 
     // If cache is flushed and mark it as half-closed
     if (cachefile_get_unacked(f) == 0) {
-        shutdown(sock, SHUT_WR);
+        //shutdown(sock, SHUT_WR);
         printf("Finished processing EOD. Closed write end (fd=%d)\n", sock);
         if (hdr->dir == PKTDIR_BKWD) {
             lc_finish_bkwd(state, lc, e);
@@ -2647,7 +2647,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         // A received EOD command should only be processed after all data has
         // been read from the cache and sent to the user socket. 
         // continue here
-        shutdown(fds[fd_i].fd, SHUT_WR);
+        //shutdown(fds[fd_i].fd, SHUT_WR);
         printf("Finished processing EOD. Closed write end (fd=%d)\n", fds[fd_i].fd);
         // Set cache to half-closed
         if (fdtype == FDTYPE_USERSERV) {
