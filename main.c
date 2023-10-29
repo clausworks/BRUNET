@@ -2982,7 +2982,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             // Event: readable
             if (fds[i].revents & POLLIN) {
                 handled_fd = true;
-                handle_pollin(state, fds, i, e);
+                status = handle_pollin(state, fds, i, e);
                 if (status < 0) {
                     err_show(e);
                     err_reset(e);
