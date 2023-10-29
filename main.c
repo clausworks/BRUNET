@@ -2015,13 +2015,14 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
     case PSOCK_CONNECTED: // already connected, data to write
         // Perform sync before receiving any new data
         if (state->peers[i].sync_received) {
-            receive_packet(state, fds, fd_i, e);
+            return receive_packet(state, fds, fd_i, e);
         }
         else {
             // TODO [future work]: handle return value & fix cheap hack.
             // See comments for receive_peer_sync.
-            receive_peer_sync(&state->peers[i], e);
             fds[fd_i].events = POLLIN | POLLOUT | POLLRDHUP;
+            receive_peer_sync(&state->peers[i], e);
+            return 0;
         }
         break;
     case PSOCK_CONNECTING: // was connecting
