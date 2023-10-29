@@ -144,13 +144,44 @@ static int set_so_nodelay(int sock, ErrorStatus *e) {
 }
 
 static int set_so_timeout(int sock, ErrorStatus *e) {
-    unsigned to = 2000; // number of seconds till timeout
+    unsigned to = SOCK_TIMEOUT_MS; // number of seconds till timeout
     int status;
 
     status = setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT,
         &to, sizeof(unsigned));
     if (status < 0) {
         err_msg_errno(e, "set_so_timeout");
+        return -1;
+    }
+    return 0;
+}
+
+static int set_so_keepalive(int sock, ErrorStatus *e) {
+    int value;
+    int status;
+
+    value = 1;
+    status = setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(value));
+    if (status < 0) {
+        err_msg_errno(e, "set_so_keepalive: setsockopt SO_KEEPALIVE");
+        return -1;
+    }
+    value = KEEPALIVE_NUM_PROB;
+    status = setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &value, sizeof(value));
+    if (status < 0) {
+        err_msg_errno(e, "set_so_keepalive: setsockopt SO_KEEPALIVE");
+        return -1;
+    }
+    value = KEEPALIVE_IDLE_SEC;
+    status = setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &value, sizeof(value));
+    if (status < 0) {
+        err_msg_errno(e, "set_so_keepalive: setsockopt SO_KEEPALIVE");
+        return -1;
+    }
+    value = KEEPALIVE_PROB_INTVL;
+    status = setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &value, sizeof(value));
+    if (status < 0) {
+        err_msg_errno(e, "set_so_keepalive: setsockopt SO_KEEPALIVE");
         return -1;
     }
     return 0;
@@ -1283,6 +1314,9 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             lc->usock_idx = i; 
             // TODO: enable POLLOUT?
             fds[i + POLL_UCSOCKS_OFF].events = POLLIN | POLLRDHUP;
+            if (set_so_keepalive(sock, e) < 0) {
+                return -1;
+            }
             return 0;
         }
     }
@@ -2654,6 +2688,9 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
         fds[fd_i].events = POLLIN | POLLRDHUP;
         // TODO: enable POLLOUT?
         state->user_serv_conns[i].sock_status = USSOCK_CONNECTED;
+        if (set_so_keepalive(fds[fd_i].fd, e) < 0) {
+            return -1;
+        }
         printf("Connected (fd %d)\n", fds[fd_i].fd);
         break;
     case USSOCK_CONNECTED: // already connected, data to write

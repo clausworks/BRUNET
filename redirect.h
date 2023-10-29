@@ -107,6 +107,10 @@ typedef struct {
 #define PEER_SYNC_LEN (sizeof(long long unsigned))
 
 #define TFD_LEN_SEC 5
+#define SOCK_TIMEOUT_MS 2000
+#define KEEPALIVE_NUM_PROB 3
+#define KEEPALIVE_IDLE_SEC 3
+#define KEEPALIVE_PROB_INTVL 1
 
 
 /* Logical connection (LC)
