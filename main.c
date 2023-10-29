@@ -2656,9 +2656,10 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         else {
             lc_finish_bkwd(state, lc, e);
         }
-        // TODO: lc_destroy now?
-        if (lc_destroy(state, lc->id, e) < 0) {
-            return -1;
+        if (lc->close_state.fin_bkwd && lc->close_state.fin_fwd) {
+            if (lc_destroy(state, lc->id, e) < 0) {
+                return -1;
+            }
         }
     }
 
