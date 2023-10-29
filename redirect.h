@@ -140,8 +140,10 @@ typedef struct {
         bool received_eod;
         bool sent_closed_wr;
         bool received_closed_wr;
-        bool fin_fwd;
-        bool fin_bkwd;
+        //bool fin_fwd;
+        //bool fin_bkwd;
+        bool fin_rd;
+        bool fin_wr;
     } close_state;
     int usock_idx;
 } LogConn;

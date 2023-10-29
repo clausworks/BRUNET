@@ -483,6 +483,27 @@ static void lc_set_id(LogConn *lc, unsigned inst, unsigned clnt_id) {
     lc->id |= inst;
 }
 
+/* This should be called if the LC has a local use socket (always true in the
+ * non-SFN case). It can be called before or after lc_destroy.
+ */
+static void close_user_sock(ConnectivityState *state, FDType fdtype,
+    int usock_idx, ErrorStatus *e) {
+
+    switch (fdtype) {
+    case FDTYPE_USERCLNT:
+        close(state->user_clnt_conns[usock_idx].sock);
+        state->user_clnt_conns[usock_idx].sock = -1;
+        break;
+    case FDTYPE_USERSERV:
+        close(state->user_serv_conns[usock_idx].sock);
+        state->user_serv_conns[usock_idx].sock = -1;
+        state->user_serv_conns[usock_idx].sock_status = USSOCK_INVALID;
+        break;
+    default:
+        assert(0);
+    }
+}
+
 static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) {
     LogConn *lc;
 
@@ -494,6 +515,10 @@ static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) 
         return -1;
     }
 
+    assert(lc->close_state.fin_wr && lc->close_state.fin_rd);
+    assert(lc->close_state.received_closed_wr || lc->close_state.sent_eod);
+    assert(lc->close_state.sent_closed_wr || lc->close_state.received_eod);
+
     if (cache_close(&lc->cache, e) < 0) {
         err_msg_prepend(e, "lc_destroy failed: ");
         return -1;
@@ -503,6 +528,26 @@ static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) 
     return 0;
 }
 
+static int try_close_lc(ConnectivityState *state, LogConn *lc,
+    FDType fdtype, ErrorStatus *e) {
+
+    printf(">> try_close_lc: ");
+
+    if (lc->close_state.fin_wr && lc->close_state.fin_rd) {
+        close_user_sock(state, fdtype, lc->usock_idx, e);
+        if (lc_destroy(state, lc->id, e) < 0) {
+            return -1;
+        }
+        printf("yup\n");
+    }
+    else {
+        printf("nope\n");
+    }
+
+    return 0;
+}
+
+/*
 static void lc_finish_fwd(ConnectivityState *state, LogConn *lc, ErrorStatus *e) {
     printf("lc_finish_fwd\n");
     lc->close_state.fin_fwd = true;
@@ -512,6 +557,8 @@ static void lc_finish_bkwd(ConnectivityState *state, LogConn *lc, ErrorStatus *e
     printf("lc_finish_bkwd\n");
     lc->close_state.fin_bkwd = true;
 }
+*/
+
 
 /******************************************************************************
  * READ/WRITE BUFFER FUNCTIONS 
@@ -965,24 +1012,6 @@ static int create_reconnect_timer(ErrorStatus *e) {
     return timerfd;
 }
 
-static void close_user_sock(ConnectivityState *state, FDType fdtype,
-    int usock_idx, ErrorStatus *e) {
-
-    switch (fdtype) {
-    case FDTYPE_USERCLNT:
-        close(state->user_clnt_conns[usock_idx].sock);
-        state->user_clnt_conns[usock_idx].sock = -1;
-        break;
-    case FDTYPE_USERSERV:
-        close(state->user_serv_conns[usock_idx].sock);
-        state->user_serv_conns[usock_idx].sock = -1;
-        state->user_serv_conns[usock_idx].sock_status = USSOCK_INVALID;
-        break;
-    default:
-        assert(0);
-    }
-}
-
 
 /* Error at the connection level that results in an invalid connection. Close
  * the connection and update the appropriate lists so that it's no longer
@@ -1018,13 +1047,13 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERCLNT:
         printf("Closed user socket\n");
         //shutdown(fds[fd_i].fd, SHUT_RDWR);
-        close(fds[fd_i].fd);
-        fds[fd_i].events &= ~(POLLOUT | POLLIN);
+        //close(fds[fd_i].fd);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
         lc->pend_pkt.lc_eod = true;
         lc->pend_pkt.lc_closed_wr = true;
+        fds[fd_i].events &= ~(POLLOUT | POLLIN);
         // Trigger packets
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
@@ -1032,12 +1061,12 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     case FDTYPE_USERSERV:
         printf("Shutdown both ends of user socket\n");
         //shutdown(fds[fd_i].fd, SHUT_RDWR);
-        fds[fd_i].events &= ~(POLLOUT | POLLIN);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
         lc->pend_pkt.lc_eod = true;
         lc->pend_pkt.lc_closed_wr = true;
+        fds[fd_i].events &= ~(POLLOUT | POLLIN);
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
 
@@ -1101,11 +1130,8 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         assert(lc != NULL);
         // Stage a packet to signal close to peer
         lc->pend_pkt.lc_closed_wr = true;
+        fds[fd_i].events &= ~(POLLOUT);
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
-        // If we already hit EOF, go ahead and close the socket
-        if (lc->pend_pkt.lc_eod || lc->close_state.sent_eod) {
-            close_user_sock(state, FDTYPE_USERCLNT, i, e);
-        }
         break;
 
     case FDTYPE_USERSERV:
@@ -1115,11 +1141,8 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         assert(lc != NULL);
         // Stage a packet to signal close to peer
         lc->pend_pkt.lc_closed_wr = true;
+        fds[fd_i].events &= ~(POLLOUT);
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
-        // If we already hit EOF, go ahead and close the socket
-        if (lc->pend_pkt.lc_eod || lc->close_state.sent_eod) {
-            close_user_sock(state, FDTYPE_USERSERV, i, e);
-        }
         break;
 
     case FDTYPE_PEER:
@@ -1151,12 +1174,12 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
         // Close half
         printf("Closing read end (fd %d)\n", fds[fd_i].fd);
         //shutdown(fds[fd_i].fd, SHUT_RD);
-        fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
         // Stage packet and trigger a send
         lc->pend_pkt.lc_eod = true;
+        fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
 
@@ -1164,12 +1187,12 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
         // Close half
         printf("Closing read end (fd %d)\n", fds[fd_i].fd);
         //shutdown(fds[fd_i].fd, SHUT_WR);
-        fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
         // Stage packet and trigger a send
         lc->pend_pkt.lc_eod = true;
+        fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
 
@@ -1698,12 +1721,15 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
 
     // If this is the end of the data, we've reached the end and should trigger
     // a send for the LC_EOD packet.
+    // FIXME don't allow sending LC_EOD until all data has been acked?
+    /*
     if (lc->pend_pkt.lc_eod) {
         if (cachefile_get_unacked(f) == 0) {
             printf("Last LC_ACK received. POLLOUT for LC_EOD\n");
             fds[fd_i].events |= POLLOUT;
         }
     }
+    */
 
     // TODO [future work]: pass this ACK packet to other peers
 
@@ -1715,7 +1741,7 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
 
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
-    //int sock;
+    FDType fdtype;
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
@@ -1724,30 +1750,26 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
     }
 
     if (hdr->dir == PKTDIR_BKWD) {
+        fdtype = FDTYPE_USERCLNT;
         assert(lc->serv_id == peer_id); // non-SFN
         //sock = fds[lc->usock_idx + POLL_UCSOCKS_OFF].fd;
         fds[lc->usock_idx + POLL_UCSOCKS_OFF].events &= ~(POLLIN);
     }
     else {
+        fdtype = FDTYPE_USERSERV;
         assert(lc->clnt_id == peer_id); // non-SFN
         //sock = fds[lc->usock_idx + POLL_USSOCKS_OFF].fd;
         fds[lc->usock_idx + POLL_UCSOCKS_OFF].events &= ~(POLLIN);
     }
 
     lc->close_state.received_closed_wr = true;
-    printf("Other side closed write end. Closing read end (fd %d)\n", fds[fd_i].fd);
+    printf(">> received_closed_wr\n");
+    // Close half of LC
+    lc->close_state.fin_rd = true;
+    printf(">> fin_rd\n");
     //shutdown(sock, SHUT_RD);
-    // Mark cache as half-closed
-    if (hdr->dir == PKTDIR_FWD) {
-        lc_finish_bkwd(state, lc, e);
-    }
-    else {
-        lc_finish_fwd(state, lc, e);
-    }
-    if (lc->close_state.fin_bkwd && lc->close_state.fin_fwd) {
-        if (lc_destroy(state, lc->id, e) < 0) {
-            return -1;
-        }
+    if (try_close_lc(state, lc, fdtype, e) < 0) {
+        return -1;
     }
 
     return 0;
@@ -1773,38 +1795,35 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
         fdtype = FDTYPE_USERCLNT;
         f = lc->cache.bkwd.hdr_base; // EOD is for bkwd
         assert(lc->serv_id == peer_id); // non-SFN
-        fds[lc->usock_idx + POLL_UCSOCKS_OFF].events |= POLLOUT;
         sock = state->user_clnt_conns[lc->clnt_id].sock;
     }
     else {
         fdtype = FDTYPE_USERSERV;
         f = lc->cache.fwd.hdr_base; // EOD is for fwd
         assert(lc->clnt_id == peer_id); // non-SFN
-        fds[lc->usock_idx + POLL_USSOCKS_OFF].events |= POLLOUT;
         sock = state->user_serv_conns[lc->serv_id].sock;
     }
 
     lc->close_state.received_eod = true;
+    printf(">> received_eod\n");
 
     // Check if cache is flushed (done writing to user sock)
     if (cachefile_get_unacked(f) == 0) {
+        lc->close_state.fin_wr = true;
+        printf(">> fin_wr\n");
+        //shutdown(..., SHUT_WR); // trigger EOF?
+        if (try_close_lc(state, lc, fdtype, e) < 0) {
+            return -1;
+        }
+        
         printf("Finished processing EOD. Closed write end (fd=%d)\n", sock);
-        if (hdr->dir == PKTDIR_BKWD) {
-            lc_finish_bkwd(state, lc, e);
+    }
+    else {
+        if (fdtype == FDTYPE_USERCLNT) {
+            fds[lc->usock_idx + POLL_UCSOCKS_OFF].events |= POLLOUT;
         }
         else {
-            lc_finish_fwd(state, lc, e);
-        }
-        // Done reading?
-        if (lc->close_state.pend_pkt.lc_eod
-            || lc->close_state.sent_eod
-            || lc->close_state.received_closed_wr) {
-            close_user_sock(state, fdtype, lc->usock_idx, e);
-        }
-        if (lc->close_state.fin_bkwd && lc->close_state.fin_fwd) {
-            if (lc_destroy(state, lc->id, e) < 0) {
-                return -1;
-            }
+            fds[lc->usock_idx + POLL_USSOCKS_OFF].events |= POLLOUT;
         }
     }
     // Destroy LC once data finishes sending to the local socket. Set POLLOUT to
@@ -2065,8 +2084,8 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     if (read_len == 0) {
         // Stage a packet to be sent when cache is emptied
         printf("Hit EOF. Closing read end (fd %d)\n", fds[fd_i].fd);
-        fds[fd_i].events &= ~(POLLIN);
         lc->pend_pkt.lc_eod = true;
+        fds[fd_i].events &= ~(POLLIN);
         fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         return 0;
     }
@@ -2195,12 +2214,26 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     while (1) {
         lc = (LogConn *)dict_iter_read(peer->lc_iter);
         int pktlen;
+        FDType fdtype;
         // Non-SFN case: look for LC 
         if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
+            /*
             if (lc->close_state.received_eod) {
                 printf("send_packet cancelled: received close packet\n");
                 //continue;
                 goto advance;
+            }
+            */
+
+            // Determine *user* socket type
+            if (lc->serv_id == peer_id) {
+                fdtype = FDTYPE_USERCLNT;
+            }
+            else if (lc->clnt_id == peer_id) {
+                fdtype = FDTYPE_USERCLNT;
+            }
+            else {
+                assert(0); // should be one of the two options above
             }
             
             // PACKET: LC_NEW
@@ -2208,7 +2241,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 // Copy to output buf only if there's enough space
                 pktlen = sizeof(PktHdr) + sizeof(LogConnPkt);
                 if (obuf_get_empty(&peer->obuf) >= pktlen) {
-                    //char fakebuf[1024];
                     PktHdr hdr = {
                         .type = PKTTYPE_LC_NEW,
                         .lc_id = lc->id,
@@ -2416,32 +2448,12 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         // Adjust flags 
                         lc->pend_pkt.lc_eod = false;
                         lc->close_state.sent_eod = true;
-                        // Flag cache as half-closed
-                        if (hdr.dir == PKTDIR_FWD) {
-                            lc_finish_fwd(state, lc, e);
-                        }
-                        else {
-                            lc_finish_bkwd(state, lc, e);
-                        }
-                        // Close socket that received EOF, but only if the write
-                        // end has been closed already. Otherwise, we have to
-                        // wait till the peer sends us EOD for the other stream.
-                        //
-                        // Sending EOD means we're done reading from the user
-                        // socket. Close the socket if we're done writing.
-                        if (lc->pend_pkt.lc_closed_wr
-                            || lc->close_state.sent_closed_wr
-                            || lc->received_eod) { // FIXME: we can only check
-                            // this AFTER the cache is flushed
-                            if (lc->serv_id == peer_id) {
-                                close_user_sock(state, FDTYPE_USERCLNT,
-                                    lc->usock_idx, e);
-                            }
-                            else if (lc->clnt_id == peer_id) {
-                                close_user_sock(state, FDTYPE_USERSERV,
-                                    lc->usock_idx, e);
-                            }
-                        }
+                        printf(">> sent_eod\n");
+                        // Close half of LC
+                        lc->close_state.fin_rd = true;
+                        printf(">> fin_rd\n");
+                        //shutdown(sock, SHUT_RD);
+                        // Close LC at end of loop
                     }
                     else {
                         out_of_space = true;
@@ -2480,14 +2492,11 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
                     lc->pend_pkt.lc_closed_wr = false;
                     lc->close_state.sent_closed_wr = true;
-                    // Once this packet is sent, we can mark the cache as
-                    // finished (i.e. half-closed)
-                    if (hdr.dir == PKTDIR_FWD) {
-                        lc_finish_bkwd(state, lc, e);
-                    }
-                    else {
-                        lc_finish_fwd(state, lc, e);
-                    }
+                    printf(">> sent_closed_wr\n");
+                    lc->close_state.fin_wr = true;
+                    printf(">> fin_wr\n");
+                    //shutdown(sock, SHUT_WR);
+                    // Close LC at end of loop
                 }
                 else {
                     out_of_space = true;
@@ -2509,7 +2518,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
 
         // We use a goto here so "goto advance" is like "continue"
-advance:
+//advance:
         // TODO: what happens when this gets to the end of the list?
         // Advance LC iterator
         if (!dict_iter_hasnext(peer->lc_iter)) {
@@ -2519,12 +2528,12 @@ advance:
             peer->lc_iter = dict_iter_next(peer->lc_iter);
         }
 
-        // Destroy LC if it's marked as destroyed
-        // We need to do this AFTER the iterator has advanced.
-        if (lc->close_state.fin_bkwd && lc->close_state.fin_fwd) {
-            if (lc_destroy(state, lc->id, e) < 0) {
-                return -1;
-            }
+        // Destroy LC if it's marked as finished for read and write to user sock
+        // We need to do this AFTER the iterator has advanced. Destroying the LC
+        // causes it to be removed from the linked list, which could messes up the
+        // iterator if it's removed.
+        if (try_close_lc(state, lc, fdtype, e) < 0) {
+            return -1;
         }
     } // end while for LCs
 
@@ -2679,24 +2688,18 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         fds[fd_i].events |= POLLOUT;
     }
 
+    // All data sent to user socket
     if (!unread_data && lc->close_state.received_eod) {
+        printf("Finished processing EOD. Closed write end (fd=%d)\n", fds[fd_i].fd);
         // A received EOD command should only be processed after all data has
         // been read from the cache and sent to the user socket. 
-        // continue here
+        lc->close_state.fin_wr = true;
+        printf(">> fin_wr\n");
+        // Close half of cache
+        if (try_close_lc(state, lc, fdtype, e) < 0) {
+            return -1;
+        }
         //shutdown(fds[fd_i].fd, SHUT_WR);
-        printf("Finished processing EOD. Closed write end (fd=%d)\n", fds[fd_i].fd);
-        // Set cache to half-closed
-        if (fdtype == FDTYPE_USERSERV) {
-            lc_finish_fwd(state, lc, e);
-        }
-        else {
-            lc_finish_bkwd(state, lc, e);
-        }
-        if (lc->close_state.fin_bkwd && lc->close_state.fin_fwd) {
-            if (lc_destroy(state, lc->id, e) < 0) {
-                return -1;
-            }
-        }
     }
 
     // TODO: make sure we never send duplicate bytes
