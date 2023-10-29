@@ -1129,7 +1129,7 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         return handle_disconnect(state, fds, fd_i, e);
 
     case FDTYPE_USERCLNT:
-        printf("Closing write end (fd %d)\n", fds[fd_i].fd);
+        printf("FDTYPE_USERCLNT POLLHUP (fd %d)\n", fds[fd_i].fd);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -1140,7 +1140,7 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         break;
 
     case FDTYPE_USERSERV:
-        printf("Closing write end (fd %d)\n", fds[fd_i].fd);
+        printf("FDTYPE_USERSERV POLLHUP (fd %d)\n", fds[fd_i].fd);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -1817,6 +1817,7 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
         lc->close_state.fin_wr = true;
         printf(">> fin_wr\n");
         // Trigger EOF on socket
+        printf("Shutdown write end on fd %d\n", sock);
         if (shutdown(sock, SHUT_WR) < 0) {
             err_msg_errno(e, "shutdown");
             return -1;
@@ -1824,8 +1825,6 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
         if (try_close_lc(state, lc, fdtype, e) < 0) {
             return -1;
         }
-        
-        printf("Finished processing EOD. Closed write end (fd=%d)\n", sock);
     }
     else {
         if (fdtype == FDTYPE_USERCLNT) {
@@ -2703,12 +2702,12 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     // All data sent to user socket
     if (!unread_data && lc->close_state.received_eod) {
-        printf("Finished processing EOD. Closed write end (fd=%d)\n", fds[fd_i].fd);
         // A received EOD command should only be processed after all data has
         // been read from the cache and sent to the user socket. 
         lc->close_state.fin_wr = true;
         printf(">> fin_wr\n");
         // trigger EOF on user sock
+        printf("Shutdown write end on fd %d\n", fds[fd_i].fd);
         if (shutdown(fds[fd_i].fd, SHUT_WR) < 0) {
             err_msg_errno(e, "shutdown");
             return -1;
