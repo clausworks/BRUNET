@@ -1282,7 +1282,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             // Link user_clnt_conns entry from LC
             lc->usock_idx = i; 
             // TODO: enable POLLOUT?
-            fds[i + POLL_UCSOCKS_OFF].events = POLLIN;// | POLLRDHUP;
+            fds[i + POLL_UCSOCKS_OFF].events = POLLIN | POLLRDHUP;
             return 0;
         }
     }
@@ -2006,10 +2006,14 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     // EOF
     if (read_len == 0) {
         // Send LC_EOD when all outgoing data has been sent
+        /*
         printf("Hit EOF. Closing read end (fd %d)\n", fds[fd_i].fd);
         shutdown(fds[fd_i].fd, SHUT_RD);
         fds[fd_i].events &= ~(POLLIN);
         lc->pend_pkt.lc_eod = true;
+        */
+        printf("Hit EOF. Doing nothing.\n");
+        return 0;
         //return handle_disconnect(state, fds, fd_i, e);
     }
     // Error
@@ -2647,7 +2651,7 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
     switch (state->user_serv_conns[i].sock_status) {
     case USSOCK_CONNECTING: // was connecting
         //printf("handle_pollout_userserv: USSOCK_CONNECTING\n");
-        fds[fd_i].events = POLLIN;// | POLLRDHUP;
+        fds[fd_i].events = POLLIN | POLLRDHUP;
         // TODO: enable POLLOUT?
         state->user_serv_conns[i].sock_status = USSOCK_CONNECTED;
         printf("Connected (fd %d)\n", fds[fd_i].fd);
