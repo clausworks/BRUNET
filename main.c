@@ -579,7 +579,7 @@ static void lc_finish_bkwd(ConnectivityState *state, LogConn *lc, ErrorStatus *e
 
 static void ibuf_init(PktReadBuf *rbuf) {
     memset(rbuf, 0, sizeof(PktReadBuf));
-    rbuf->len = PEER_BUF_LEN;
+    rbuf->len = IBUF_LEN;
 }
 
 /* Just clears the buffer and resets the write head.
@@ -591,7 +591,7 @@ static void ibuf_clear(PktReadBuf *rbuf) {
 
 static void obuf_reset(WriteBuf *wbuf) {
     memset(wbuf, 0, sizeof(WriteBuf));
-    wbuf->len = PEER_BUF_LEN;
+    wbuf->len = OBUF_LEN;
 }
 
 static int obuf_get_empty(WriteBuf *buf) {
@@ -1279,7 +1279,6 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
     }
 
     // New logical connection
-    log_printf(LOG_INFO, "New logical connection\n");
     if (getsockopt(sock, IPPROTO_IP, SO_ORIGINAL_DST,
         &servaddr, &addrlen) < 0) {
         err_msg_errno(e, "getsockopt: SO_ORIGINAL_DST");
@@ -1367,6 +1366,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
             /*if (set_so_keepalive(sock, e) < 0) {
                 return -1;
             }*/
+            log_printf(LOG_INFO, "New logical connection (id %u)\n", lc->id);
             return 0;
         }
     }
@@ -2346,7 +2346,12 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
                     // Get avail. num bytes in cache
                     paylen = cachefile_get_readlen(f, peer_id);
+                    // TODO [future work]: this might be a bug. We shouldn't get
+                    // here and have a readlen of 0.
                     log_printf(LOG_DEBUG, "cachefile_get_readlen: %llu\n", paylen);
+                    if (paylen == 0) {
+                        log_printf(LOG_DEBUG, "LC_DATA pending but no data to read.");
+                    }
                     if (PKT_MAX_PAYLOAD_LEN < paylen) {
                         paylen = PKT_MAX_PAYLOAD_LEN;
                         out_of_space = true;
@@ -2360,26 +2365,32 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     }
                     // This should always succeed, since paylen <= readlen
                     hdr.off = cachefile_get_read(f, peer_id);
-                    assert(paylen == cachefile_read(f, peer_id, buf, paylen, e));
-                    log_printf(LOG_DEBUG, "cachefile_get_read [src]: %llu\n",
-                    cachefile_get_read(f, peer_id));
+                    if (paylen > 0) {
+                        assert(paylen == cachefile_read(f, peer_id, buf, paylen, e));
+                        log_printf(LOG_DEBUG, "cachefile_get_read [src]: %llu\n",
+                        cachefile_get_read(f, peer_id));
 
-                    hdr.len = paylen; // payload length
+                        hdr.len = paylen; // payload length
 
-                    // Copy header, payload to output buffer
-                    print_pkthdr(&hdr);
-                    copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
-                    copy_to_obuf(&peer->obuf, buf, paylen);
+                        // Copy header, payload to output buffer
+                        print_pkthdr(&hdr);
+                        copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
+                        copy_to_obuf(&peer->obuf, buf, paylen);
 
-                    if (out_of_space) {
-                        // re-enabled pollout
-                        //lc->pending_data[peer_id] = PEND_DATA;
-                        lc->pend_pkt.lc_data = true;
+                        if (out_of_space) {
+                            // re-enabled pollout
+                            //lc->pending_data[peer_id] = PEND_DATA;
+                            lc->pend_pkt.lc_data = true;
+                        }
+                        else {
+                            // don't disable pollout, in case another LC enabled it
+                            //lc->pending_data[peer_id] = PEND_NODATA;
+                            lc->pend_pkt.lc_data = false;
+                        }
                     }
                     else {
-                        // don't disable pollout, in case another LC enabled it
-                        //lc->pending_data[peer_id] = PEND_NODATA;
-                        lc->pend_pkt.lc_data = false;
+                        log_printf(LOG_DEBUG,
+                            "LC_DATA cancelled - payload len 0");
                     }
                 }
                 else {

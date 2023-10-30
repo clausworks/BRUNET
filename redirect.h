@@ -76,7 +76,16 @@ typedef struct {
 
 #define PKT_MAX_LEN 1024
 #define PKT_MAX_PAYLOAD_LEN (PKT_MAX_LEN - sizeof(PktHdr))
-#define PEER_BUF_LEN 4096
+// TODO [future work]: known bug
+// Currently, we loop through all LCs outputting to a given peer socket, and
+// stop early only if the output buffer fills up. This is an issue, because a
+// high-volume connection that appears early in the LC list can fill up the
+// buffer and later connections will not be reached until that connection stops
+// or reduces its transmissions, which could be a very long time. This is not an
+// issue in systems where most transmissions are sporadic, even if they are high
+// volume.
+#define OBUF_LEN (16*PKT_MAX_LEN)
+#define IBUF_LEN PKT_MAX_LEN // large enough to read a single packet
 
 //#define RDR_BUF_SIZE 4096
 
@@ -156,7 +165,7 @@ typedef struct {
 } LogConnPkt;
 
 typedef struct {
-    char buf[PEER_BUF_LEN];
+    char buf[OBUF_LEN];
     int len;
     int r;
     int w;
@@ -169,7 +178,7 @@ typedef struct {
 } WriteBuf;
 
 typedef struct {
-    char buf[PEER_BUF_LEN];
+    char buf[IBUF_LEN];
     int len;
     int w;
     unsigned long long total_received; // ideally, matches obuf.last_acked
