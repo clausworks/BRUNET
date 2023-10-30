@@ -2,9 +2,10 @@
 #define ERROR_H
 
 typedef enum {
-    LEVEL_DEBUG,
-    LEVEL_INFO,
-    LEVEL_ERROR
+    LOG_DEBUG,
+    LOG_INFO,
+    LOG_ERROR,
+    LOG_CRITICAL,
 } InfoLevel;
 
 typedef enum {
@@ -17,6 +18,7 @@ typedef struct {
     char *msg;
 } ErrorStatus;
 
+void log_printf(InfoLevel, char *, ...);
 void err_init(ErrorStatus *);
 void err_msg(ErrorStatus *, char *, ...);
 void err_msg_errno(ErrorStatus *, char *, ...);

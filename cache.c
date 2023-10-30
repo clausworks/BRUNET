@@ -83,7 +83,7 @@ static void _move_act_hd_to_free(CacheFileHeader *f) {
     f->act_hd = new_act_hd;
 
 #ifdef __TEST
-    printf("_mov_act_hd_to_free:\n");
+    log_printf(LOG_DEBUG, "_mov_act_hd_to_free:\n");
     __print_ll("Free list", f, f->free_hd);
     __print_ll("Active list", f, f->act_hd);
 #endif
@@ -143,7 +143,7 @@ static int _extend_active_list(CacheFileHeader *f, ErrorStatus *e) {
     f->act_tl = new_blk_off;
 
 #ifdef __TEST
-    printf("_extend_active_list");
+    log_printf(LOG_DEBUG, "_extend_active_list");
     __print_blk(f, new_blk_off);
     __print_ll("_extend_active_list (after)", f, f->act_hd);
 #endif
@@ -430,7 +430,7 @@ void cachefile_ack(CacheFileHeader *f, long long n_acked) {
     // Update logical value
     f->logical_ack += n_acked;
 
-    printf("cachefile_ack: %lld bytes\n", n_acked);
+    log_printf(LOG_DEBUG, "cachefile_ack: %lld bytes\n", n_acked);
 
     // Update read heads
     for (int p = 0; p < f->n_peers; ++p) {
@@ -614,7 +614,7 @@ int cache_close(Cache *cache, ErrorStatus *e) {
  */
 int cache_sync(Cache *cache, ErrorStatus *e) {
     // TODO: stub
-    printf("cache_sync: stub\n");
+    log_printf(LOG_DEBUG, "cache_sync: stub\n");
     return -1;
 }
 

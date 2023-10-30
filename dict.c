@@ -84,7 +84,7 @@ static int _dict_insert(Dict *d, unsigned key, void *value, ErrorStatus *e) {
 
     d->buckets[b] = new;
 
-    printf("DICT: inserted node %u at bucket %u\n", key, b);
+    log_printf(LOG_DEBUG, "DICT: inserted node %u at bucket %u\n", key, b);
 
     ll_append_(d, new); // background linked list
 
@@ -108,7 +108,7 @@ int dict_set_add(Dict *d, unsigned key, ErrorStatus *e) {
     head = d->buckets[b];
     existing = _dict_traverse_chain(head, key);
     if (existing != NULL) {
-        printf("DICT: did not set-add node %u at bucket %u\n", key, b);
+        log_printf(LOG_DEBUG, "DICT: did not set-add node %u at bucket %u\n", key, b);
         return 1;
     }
 
@@ -175,7 +175,7 @@ void *dict_pop(Dict *d, unsigned key, ErrorStatus *e) {
 
     free(node);
 
-    printf("DICT: removed node %u at bucket %u\n", key, b);
+    log_printf(LOG_DEBUG, "DICT: removed node %u at bucket %u\n", key, b);
 
     return value;
 }
@@ -248,7 +248,7 @@ void dict_destroy(Dict *d) {
     }
 
     if (freed_nodes) {
-        printf("Warning: freed Dict had elements in it (possible memory leak)\n");
+        log_printf(LOG_DEBUG, "Warning: freed Dict had elements in it (possible memory leak)\n");
     }
 
     free(d->buckets);

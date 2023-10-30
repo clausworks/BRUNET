@@ -10,6 +10,47 @@
 #include "error.h"
 #include "errnoname.h"
 
+void log_printf(InfoLevel level, char *fmt, ...) {
+    va_list ap;
+
+    FILE *outfile;
+
+    switch (level) {
+        case LOG_DEBUG:
+        case LOG_INFO:
+            outfile = stdout;
+            break;
+        case LOG_ERROR:
+            // We want errors to appear in the same stream as other messages.
+            outfile = stdout;
+            break;
+        case LOG_CRITICAL:
+            outfile = stderr;
+            break;
+    }
+
+    switch (level) {
+        case LOG_DEBUG:
+            fprintf(outfile, "[DEBUG] ");
+            break;
+        case LOG_INFO:
+            fprintf(outfile, "[INFO]  ");
+            break;
+        case LOG_ERROR:
+            fprintf(outfile, "[ERROR] ");
+            break;
+        case LOG_CRITICAL:
+            fprintf(outfile, "[ERROR] ");
+            break;
+        default:
+            assert(0);
+    }
+
+    va_start(ap, fmt);
+    vfprintf(outfile, fmt, ap);
+    va_end(ap);
+}
+
 // Derived from make_message function at `man 3 printf`
 char *alloc_msg(const char *fmt, va_list ap) {
     int n = 0;
@@ -184,25 +225,11 @@ void err_make(ErrorStatus *e, ErrorType *type, void *payload, size_t
 */
 
 void err_show(ErrorStatus *e) {
-    FILE *fp = stdout;
-    /*
-    switch(e->level) {
-        case LEVEL_DEBUG:
-            fprintf(fp, "[DEBUG] ");
-            break;
-        case LEVEL_INFO:
-            fprintf(fp, "[INFO]  ");
-            break;
-        case LEVEL_ERROR:
-            fprintf(fp, "[ERROR] ");
-            break;
-    }
-    */
     if (e->msg != NULL) {
-        fprintf(fp, "[ERROR] %s\n", e->msg);
+        log_printf(LOG_ERROR, "%s\n", e->msg);
     }
     else {
-        fprintf(fp, "[ERROR] (no message provided)\n");
+        log_printf(LOG_ERROR, "(no message provided)\n");
     }
 }
 
@@ -212,16 +239,6 @@ void err_show_if_present(ErrorStatus *e) {
         fprintf(fp, "[ERROR] %s\n", e->msg);
     }
 }
-
-/*
-void loginfo(InfoLevel level, char *fmt, ...) {
-    va_list ap;
-
-    va_start(ap, fmt);
-    _err_msg(e, fmt, ap);
-    va_end(ap);
-}
-*/
 
 #ifdef __TEST
 

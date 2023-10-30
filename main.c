@@ -95,7 +95,7 @@ static void print_sock_info(int s) {
     memset(&remote, 0, sizeof(struct sockaddr_in));
 
     if (s < 0) {
-        printf("SOCKET INFO: fd=%d\n", s);
+        log_printf(LOG_DEBUG, "SOCKET INFO: fd=%d\n", s);
     }
 
     status |= getsockname(s, &local, &addrlen);
@@ -105,13 +105,13 @@ static void print_sock_info(int s) {
         strcpy(localstr, inet_ntoa(local.sin_addr));
         strcpy(remotestr, inet_ntoa(remote.sin_addr));
 
-        printf("SOCKET INFO: fd=%d, local=%s:%hu, remote=%s:%hu\n",
+        log_printf(LOG_DEBUG, "SOCKET INFO: fd=%d, local=%s:%hu, remote=%s:%hu\n",
             s,
             localstr, ntohs(local.sin_port),
             remotestr, ntohs(remote.sin_port));
     }
     else {
-        printf("SOCKET INFO: fd=%d\n", s);
+        log_printf(LOG_DEBUG, "SOCKET INFO: fd=%d\n", s);
     }
 }
 
@@ -128,7 +128,7 @@ static int has_so_error(int sock, ErrorStatus *e) {
     if (so_error) {
         // TODO: interpret so_error (same as errno?)
         errno = so_error;
-        printf("SO_ERROR on fd %d: %s\n", sock, strerror(errno));
+        log_printf(LOG_DEBUG, "SO_ERROR on fd %d: %s\n", sock, strerror(errno));
         errno = 0;
         return so_error;
     }
@@ -204,7 +204,7 @@ static int set_so_timeout(int sock, ErrorStatus *e) {
         return -1;
     }
 
-    //printf("TCP_QUICKACK: optlen = %u\n", optlen);
+    //log_printf(LOG_DEBUG, "TCP_QUICKACK: optlen = %u\n", optlen);
 
     if (value) {
         status = setsockopt(sock, IPPROTO_TCP, TCP_QUICKACK, &value, sizeof(int));
@@ -212,7 +212,7 @@ static int set_so_timeout(int sock, ErrorStatus *e) {
             err_msg_errno(e, "set_so_quickack: setsockopt");
             return -1;
         }
-        //printf("Enabled TCP_QUICKACK\n");
+        //log_printf(LOG_DEBUG, "Enabled TCP_QUICKACK\n");
     }
 
     return 0;
@@ -262,7 +262,7 @@ int begin_listen(struct in_addr addr, in_port_t port, ErrorStatus *e) {
         return -1;
     }
 
-    printf("Listening on %s:%hu\n", inet_ntoa(addr), ntohs(port));
+    log_printf(LOG_DEBUG, "Listening on %s:%hu\n", inet_ntoa(addr), ntohs(port));
 
     return sock;
 }
@@ -310,7 +310,7 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
         
         // Acceptable if this fails. Failure to bind is not catastrophic.
 
-        printf("attempt_connect: (warning) failed to bind to %s failed\n", inet_ntoa(clnt_ip));
+        log_printf(LOG_DEBUG, "attempt_connect: (warning) failed to bind to %s failed\n", inet_ntoa(clnt_ip));
         perror("bind");
         // do nothing... see note right below
 
@@ -323,10 +323,10 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
         // interval.
     }
     else {
-        //printf("attempt_connect: bind to %s\n", inet_ntoa(clnt_ip));
+        //log_printf(LOG_DEBUG, "attempt_connect: bind to %s\n", inet_ntoa(clnt_ip));
     }
 
-    printf("Attempting to connect to %s:%hu (fd=%d)\n", inet_ntoa(serv_ip),
+    log_printf(LOG_DEBUG, "Attempting to connect to %s:%hu (fd=%d)\n", inet_ntoa(serv_ip),
         ntohs(serv_port), sock);
 
 
@@ -361,7 +361,7 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
 static FDType get_fd_type(ConnectivityState *state, int i) {
     int start, end;
     if (i < 0) {
-        fprintf(stderr, "get_fd_type: invalid index\n");
+        log_printf(LOG_CRITICAL, "get_fd_type: invalid index\n");
         exit(EXIT_FAILURE);
     }
 
@@ -398,7 +398,7 @@ static FDType get_fd_type(ConnectivityState *state, int i) {
     }
     */
 
-    fprintf(stderr, "get_fd_type: invalid index\n");
+    log_printf(LOG_CRITICAL, "get_fd_type: invalid index\n");
     exit(EXIT_FAILURE);
 }
 
@@ -438,39 +438,39 @@ static int _peer_compare_addr(const void *a, const void *b) {
 }
 
 static void print_pkthdr(PktHdr *hdr) {
-    printf("PACKET ");
+    log_printf(LOG_DEBUG, "PACKET ");
     switch (hdr->type) {
         case PKTTYPE_LC_NEW:
-            printf("LC_NEW");
+            log_printf(LOG_DEBUG, "LC_NEW");
             break;
         case PKTTYPE_LC_EOD:
-            printf("LC_EOD");
+            log_printf(LOG_DEBUG, "LC_EOD");
             break;
         case PKTTYPE_LC_CLOSED_WR:
-            printf("LC_CLOSED_WR");
+            log_printf(LOG_DEBUG, "LC_CLOSED_WR");
             break;
         case PKTTYPE_LC_ACK:
-            printf("LC_ACK");
+            log_printf(LOG_DEBUG, "LC_ACK");
             break;
         case PKTTYPE_LC_DATA:
-            printf("LC_DATA");
+            log_printf(LOG_DEBUG, "LC_DATA");
             break;
         default:
             assert(0);
     }
     switch (hdr->dir) {
         case PKTDIR_FWD:
-            printf(" (clnt->serv)");
+            log_printf(LOG_DEBUG, " (clnt->serv)");
             break;
         case PKTDIR_BKWD:
-            printf(" (serv->clnt)");
+            log_printf(LOG_DEBUG, " (serv->clnt)");
             break;
         default:
             assert(0);
     }
-    printf(": lc_id=%llu, ", hdr->lc_id);
-    printf("off=%llu, ", hdr->off);
-    printf("len=%hu\n", hdr->len);
+    log_printf(LOG_DEBUG, ": lc_id=%llu, ", hdr->lc_id);
+    log_printf(LOG_DEBUG, "off=%llu, ", hdr->off);
+    log_printf(LOG_DEBUG, "len=%hu\n", hdr->len);
 }
 
 
@@ -512,7 +512,7 @@ static void close_user_sock(ConnectivityState *state, FDType fdtype,
 static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) {
     LogConn *lc;
 
-    printf("lc_destroy\n");
+    log_printf(LOG_INFO, "Closed logical connection (id %u)\n", lc_id);
 
     lc = dict_pop(state->log_conns, lc_id, e);
     if (lc == NULL) {
@@ -536,30 +536,29 @@ static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) 
 static int try_close_lc(ConnectivityState *state, LogConn *lc,
     FDType fdtype, ErrorStatus *e) {
 
-    printf(">> try_close_lc: ");
 
     if (lc->close_state.fin_wr && lc->close_state.fin_rd) {
         close_user_sock(state, fdtype, lc->usock_idx, e);
         if (lc_destroy(state, lc->id, e) < 0) {
             return -1;
         }
-        printf("yup\n");
-    }
-    else {
-        printf("nope\n");
+        log_printf(LOG_DEBUG, "try_close_lc: closed\n");
+        return 0;
     }
 
+    
+    log_printf(LOG_DEBUG, "try_close_lc: did not close\n");
     return 0;
 }
 
 /*
 static void lc_finish_fwd(ConnectivityState *state, LogConn *lc, ErrorStatus *e) {
-    printf("lc_finish_fwd\n");
+    log_printf(LOG_DEBUG, "lc_finish_fwd\n");
     lc->close_state.fin_fwd = true;
 }
 
 static void lc_finish_bkwd(ConnectivityState *state, LogConn *lc, ErrorStatus *e) {
-    printf("lc_finish_bkwd\n");
+    log_printf(LOG_DEBUG, "lc_finish_bkwd\n");
     lc->close_state.fin_bkwd = true;
 }
 */
@@ -673,7 +672,7 @@ static int obuf_update_ack(WriteBuf *buf, int sock, bool is_peer_sock, ErrorStat
 
     buf->is_paused = false;
 
-    printf("obuf_update_ack: a=%u, delta=%llu, total=%llu\n", buf->a,
+    log_printf(LOG_DEBUG, "obuf_update_ack: a=%u, delta=%llu, total=%llu\n", buf->a,
         ack_increment, buf->total_acked);
 
     return (int)(ack_increment);
@@ -711,13 +710,13 @@ static int writev_from_obuf(WriteBuf *buf, int sock, ErrorStatus *e) {
     // No bytes to write
     else {
         //n_seqs = 0;
-        printf("No bytes to write to peer\n");
+        log_printf(LOG_DEBUG, "No bytes to write to peer\n");
         return 0;
     }
 
     // Perform write
     n_written = writev(sock, buf->vecbuf, n_seqs);
-    printf("write to fd %d: %d bytes\n", sock, n_written);
+    log_printf(LOG_DEBUG, "write to fd %d: %d bytes\n", sock, n_written);
     //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
     if (n_written == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -884,7 +883,7 @@ static void add_peer(ConnectivityState *state, int *p,
         if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
             state->peers[*p].sock_status = PSOCK_THIS_DEVICE;
             state->this_dev_id = *p;
-            printf("this_dev_id = %d\n", *p);
+            log_printf(LOG_DEBUG, "this_dev_id = %d\n", *p);
         }
         else {
             state->peers[*p].sock_status = PSOCK_INVALID;
@@ -893,7 +892,7 @@ static void add_peer(ConnectivityState *state, int *p,
         ibuf_init(&state->peers[*p].ibuf);
 
 
-        printf("Added peer %s\n", inet_ntoa(addr));
+        log_printf(LOG_DEBUG, "Added peer %s\n", inet_ntoa(addr));
         *p += 1;
     }
 }
@@ -917,7 +916,7 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
     
     state->n_peers = p;
 
-    printf("Found %d peers\n", p);
+    log_printf(LOG_DEBUG, "Found %d peers\n", p);
 
     // Sort peers list
     qsort(state->peers, state->n_peers, sizeof(PeerState), _peer_compare_addr);
@@ -1011,7 +1010,7 @@ static int create_reconnect_timer(ErrorStatus *e) {
         return -1;
     }
 
-    printf("Reconnect timer: %lds, %ldns\n",
+    log_printf(LOG_DEBUG, "Reconnect timer: %lds, %ldns\n",
         newtime.it_value.tv_sec, newtime.it_value.tv_nsec);
 
     return timerfd;
@@ -1033,7 +1032,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
     LogConn *lc;
 
     // Close socket
-    printf("Handling disconnect (fd=%d)\n", fds[fd_i].fd);
+    log_printf(LOG_DEBUG, "Handling disconnect (fd=%d)\n", fds[fd_i].fd);
 
     switch (get_fd_type(state, fd_i)) {
 
@@ -1050,7 +1049,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         return -1;
 
     case FDTYPE_USERCLNT:
-        printf("Closed user socket\n");
+        log_printf(LOG_DEBUG, "Closed user socket\n");
         //shutdown(fds[fd_i].fd, SHUT_RDWR);
         //close(fds[fd_i].fd);
         i = fd_i - POLL_UCSOCKS_OFF;
@@ -1064,7 +1063,7 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         break;
 
     case FDTYPE_USERSERV:
-        printf("Shutdown both ends of user socket\n");
+        log_printf(LOG_DEBUG, "Shutdown both ends of user socket\n");
         //shutdown(fds[fd_i].fd, SHUT_RDWR);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
@@ -1129,7 +1128,7 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         return handle_disconnect(state, fds, fd_i, e);
 
     case FDTYPE_USERCLNT:
-        printf("FDTYPE_USERCLNT POLLHUP (fd %d)\n", fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "FDTYPE_USERCLNT POLLHUP (fd %d)\n", fds[fd_i].fd);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -1140,7 +1139,7 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         break;
 
     case FDTYPE_USERSERV:
-        printf("FDTYPE_USERSERV POLLHUP (fd %d)\n", fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "FDTYPE_USERSERV POLLHUP (fd %d)\n", fds[fd_i].fd);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
@@ -1177,7 +1176,7 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
 
     case FDTYPE_USERCLNT:
         // Close half
-        printf("Closing read end (fd %d)\n", fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "Closing read end (fd %d)\n", fds[fd_i].fd);
         //shutdown(fds[fd_i].fd, SHUT_RD);
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
@@ -1190,7 +1189,7 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
 
     case FDTYPE_USERSERV:
         // Close half
-        printf("Closing read end (fd %d)\n", fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "Closing read end (fd %d)\n", fds[fd_i].fd);
         //shutdown(fds[fd_i].fd, SHUT_WR);
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
@@ -1227,7 +1226,7 @@ static int handle_pollin_timer(ConnectivityState *state, struct pollfd fds[],
     if (num_expir > 0) {
         assert(state->peers[i].sock_status != PSOCK_THIS_DEVICE);
 
-        //printf("timer expired %llu times\n", num_expir);
+        //log_printf(LOG_DEBUG, "timer expired %llu times\n", num_expir);
         // New attempt to connect to peer
         s = attempt_connect(state->peers[i].addr, htons(CF_PEER_LISTEN_PORT),
             state->peers[state->this_dev_id].addr, e);
@@ -1273,7 +1272,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
     }
 
     // New logical connection
-    printf("New logical connection\n");
+    log_printf(LOG_INFO, "New logical connection\n");
     if (getsockopt(sock, IPPROTO_IP, SO_ORIGINAL_DST,
         &servaddr, &addrlen) < 0) {
         err_msg_errno(e, "getsockopt: SO_ORIGINAL_DST");
@@ -1294,7 +1293,7 @@ static int handle_new_userclnt(ConnectivityState *state, struct pollfd fds[],
     lc->serv_port = servaddr.sin_port;
 
     // Get index ("peer ID") of connection originator
-    printf("Original socket destination: %s:%hu\n",
+    log_printf(LOG_INFO, "Original socket destination: %s:%hu\n",
         inet_ntoa(servaddr.sin_addr), ntohs(servaddr.sin_port));
     dummy.addr = clntaddr.sin_addr;
     result = bsearch(&dummy, state->peers, state->n_peers,
@@ -1396,7 +1395,7 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
     switch (state->peers[peer_id].sock_status) {
 
     case PSOCK_CONNECTED:
-        printf("cleanup obuf before close...\n");
+        log_printf(LOG_DEBUG, "cleanup obuf before close...\n");
         //obuf_update_ack(&state->peers[peer_id].obuf,
             //state->peers[peer_id].sock, true, e);
         obuf_close_cleanup(&state->peers[peer_id].obuf);
@@ -1423,7 +1422,7 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
         // triggering an infinite loop of reconnection attempts. This was solved
         // by only allowing the machine with the lower peer_id to attempt a
         // reconnection.
-        //printf("Already connected to peer: closing sock %d\n", sock);
+        //log_printf(LOG_DEBUG, "Already connected to peer: closing sock %d\n", sock);
         //has_so_error(state->peers[peer_id].sock, e);
         //close(sock);
         //break;
@@ -1465,17 +1464,17 @@ static int block_till_connected(int sock, ErrorStatus *e) {
 
         if (usleep(1e3) < 0) {
             assert(errno = EINTR); // alternative, errno == EINVAL, shouldn't happen
-            printf("usleep: returned early\n");
+            log_printf(LOG_DEBUG, "usleep: returned early\n");
         }
 
         ++total_ms;
     }
 
     if (total_ms > 0) {
-        printf("blocked %u ms for handshake\n", total_ms);
+        log_printf(LOG_DEBUG, "blocked %u ms for handshake\n", total_ms);
     }
     else {
-        printf("didn't block for handshake\n");
+        log_printf(LOG_DEBUG, "didn't block for handshake\n");
     }
 
     return 0;
@@ -1512,7 +1511,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
         // NOTE: checking for EWOULDBLOCK causes a compilation error since
         // its value is the same as EAGAIN
         // case EWOULDBLOCK:
-            printf("accept: no pending connections\n");
+            log_printf(LOG_DEBUG, "accept: no pending connections\n");
             return 0; // spurious trigger, not really an error
         // See accept(2)>return value>error handling: 
         case ENETDOWN:
@@ -1537,7 +1536,7 @@ static int handle_pollin_listen(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
 
-    printf("Accepted connection from %s\n", inet_ntoa(peer_addr.sin_addr));
+    log_printf(LOG_INFO, "Accepted connection from %s\n", inet_ntoa(peer_addr.sin_addr));
     print_sock_info(sock);
 
     // Debug
@@ -1567,7 +1566,7 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
     char *pktbuf = state->peers[peer_id].ibuf.buf;
     int sock;
 
-    printf("process_lc_new\n");
+    log_printf(LOG_DEBUG, "process_lc_new\n");
 
     PktHdr *hdr = (PktHdr *)(pktbuf);
     LogConnPkt *pkt_lc = (LogConnPkt *)(pktbuf + sizeof(PktHdr));
@@ -1599,7 +1598,7 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
         }
     }
     else {
-        printf("Note: ignoring LC_NEW packet. LC already exists.\n");
+        log_printf(LOG_DEBUG, "Note: ignoring LC_NEW packet. LC already exists.\n");
         return 0;
     }
 
@@ -1664,7 +1663,7 @@ static int process_lc_data(ConnectivityState *state, struct pollfd fds[],
     // LC IDs, or request other nodes restart their proxy programs as well.
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
-        printf("Note: ignored LC_DATA (LC doesn't exist)\n");
+        log_printf(LOG_DEBUG, "Note: ignored LC_DATA (LC doesn't exist)\n");
         return 0;
     }
 
@@ -1690,7 +1689,7 @@ static int process_lc_data(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
     else {
-        printf("cachefile_get_write [dst]: %llu\n", cachefile_get_write(f));
+        log_printf(LOG_DEBUG, "cachefile_get_write [dst]: %llu\n", cachefile_get_write(f));
         return 0;
     }
 }
@@ -1705,7 +1704,7 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
-        printf("Note: ignored LC_ACK (LC doesn't exist)\n");
+        log_printf(LOG_DEBUG, "Note: ignored LC_ACK (LC doesn't exist)\n");
         return 0;
     }
     
@@ -1722,13 +1721,13 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     last_acked = cachefile_get_ack(f);
     assert(last_acked < hdr->off); // non-SFN only
     cachefile_ack(f, hdr->off - last_acked);
-    printf("cachefile_get_ack [src]: %llu\n", cachefile_get_ack(f));
+    log_printf(LOG_DEBUG, "cachefile_get_ack [src]: %llu\n", cachefile_get_ack(f));
 
     // If this is the end of the data, we've reached the end and should trigger
     // a send for the LC_EOD packet, in case it doesn't get triggered otherwise.
     if (lc->pend_pkt.lc_eod) {
         if (cachefile_get_unacked(f) == 0) {
-            printf("Last LC_ACK received. POLLOUT set for LC_EOD\n");
+            log_printf(LOG_DEBUG, "Last LC_ACK received. POLLOUT set for LC_EOD\n");
             fds[fd_i].events |= POLLOUT;
         }
     }
@@ -1747,7 +1746,7 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
-        printf("Note: ignored LC_CLOSED_WR (LC doesn't exist)\n");
+        log_printf(LOG_DEBUG, "Note: ignored LC_CLOSED_WR (LC doesn't exist)\n");
         return 0;
     }
 
@@ -1765,10 +1764,10 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
     }
 
     lc->close_state.received_closed_wr = true;
-    printf(">> received_closed_wr\n");
+    log_printf(LOG_DEBUG, "received_closed_wr\n");
     // Close half of LC
     lc->close_state.fin_rd = true;
-    printf(">> fin_rd\n");
+    log_printf(LOG_DEBUG, "fin_rd\n");
     //shutdown(sock, SHUT_RD);
     if (try_close_lc(state, lc, fdtype, e) < 0) {
         return -1;
@@ -1788,7 +1787,7 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
-        printf("Note: ignored LC_EOD (LC doesn't exist)\n");
+        log_printf(LOG_DEBUG, "Note: ignored LC_EOD (LC doesn't exist)\n");
         return 0;
     }
 
@@ -1807,14 +1806,14 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
     }
 
     lc->close_state.received_eod = true;
-    printf(">> received_eod\n");
+    log_printf(LOG_DEBUG, "received_eod\n");
 
     // Check if cache is flushed (done writing to user sock)
     if (cachefile_get_unacked(f) == 0) {
         lc->close_state.fin_wr = true;
-        printf(">> fin_wr\n");
+        log_printf(LOG_DEBUG, "fin_wr\n");
         // Trigger EOF on socket
-        printf("Shutdown write end on fd %d\n", sock);
+        log_printf(LOG_DEBUG, "Shutdown write end on fd %d\n", sock);
         if (shutdown(sock, SHUT_WR) < 0) {
             err_msg_errno(e, "shutdown");
             return -1;
@@ -1859,7 +1858,7 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
     case PKTTYPE_LC_CLOSED_WR:
         return process_lc_closed_wr(state, fds, fd_i, e);
     default:
-        printf("PKTTYPE unknown\n");
+        log_printf(LOG_DEBUG, "PKTTYPE unknown\n");
         assert(0); // should never get here
     }
 
@@ -1903,12 +1902,12 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         }
 
         read_len = read(fds[fd_i].fd, buf->buf + buf->w, nbytes);
-        printf("%d bytes read, %d attempted (fd %d)\n", read_len, nbytes, fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "%d bytes read, %d attempted (fd %d)\n", read_len, nbytes, fds[fd_i].fd);
         //hex_dump(NULL, buf->buf + buf->w, read_len, 16);
 
         // EOF
         if (read_len == 0) {
-            printf("Hit EOF (fd=%d)\n", fds[fd_i].fd);
+            log_printf(LOG_DEBUG, "Hit EOF (fd=%d)\n", fds[fd_i].fd);
             return handle_disconnect(state, fds, fd_i, e);
             // TODO: close socket, or only shutdown half? This makes sense as
             // long as the only way this connection hits EOF is if close() is
@@ -1917,13 +1916,13 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         // Error
         else if (read_len < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                printf("Read return < 0\n");
+                log_printf(LOG_DEBUG, "Read return < 0\n");
                 err_msg_errno(e, "read returned < 0");
                 handle_disconnect(state, fds, fd_i, e);
                 return -1;
             }
             else {
-                printf("Faulty trigger for pollin\n");
+                log_printf(LOG_DEBUG, "Faulty trigger for pollin\n");
                 return 0;
             }
         }
@@ -1931,7 +1930,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         else if (read_len < nbytes) {
             buf->w += read_len;
             buf->total_received += read_len;
-            printf("Incomplete packet\n");
+            log_printf(LOG_DEBUG, "Incomplete packet\n");
             return 0; // finish read on next run
         }
         // Complete
@@ -1947,7 +1946,7 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
     }
 
     // Have full packet
-    printf("Processing packet...\n");
+    log_printf(LOG_DEBUG, "Processing packet...\n");
     if (process_packet(state, fds, fd_i, e) < 0) {
         ibuf_clear(buf);
         return -1;
@@ -1980,17 +1979,17 @@ static int receive_peer_sync(PeerState *peer, ErrorStatus *e) {
     ack_increment = peer_total_received - peer->obuf.total_acked;
 
     peer->sync_received = true;
-    printf("SYNC-RECV on fd %d:\n", peer->sock);
-    printf("    obuf.total_sent:     %llu\n", peer->obuf.total_sent);
-    printf("    peer_total_received: %llu\n", peer_total_received);
-    printf("    obuf.total_acked:    %llu\n", peer->obuf.total_acked);
-    printf("    read - acked:        %llu\n", ack_increment);
-    printf("    obuf unacked (1):    %d\n", obuf_get_unacked(&peer->obuf));
-    printf("    obuf unacked (2):    %llu\n", peer->obuf.total_sent - peer->obuf.total_acked);
-    printf("    obuf unread:         %d\n", obuf_get_unread(&peer->obuf));
-    printf("    obuf->w: %d\n", peer->obuf.w);
-    printf("    obuf->r: %d\n", peer->obuf.r);
-    printf("    obuf->a: %d\n", peer->obuf.a);
+    log_printf(LOG_DEBUG, "SYNC-RECV on fd %d:\n", peer->sock);
+    log_printf(LOG_DEBUG, "    obuf.total_sent:     %llu\n", peer->obuf.total_sent);
+    log_printf(LOG_DEBUG, "    peer_total_received: %llu\n", peer_total_received);
+    log_printf(LOG_DEBUG, "    obuf.total_acked:    %llu\n", peer->obuf.total_acked);
+    log_printf(LOG_DEBUG, "    read - acked:        %llu\n", ack_increment);
+    log_printf(LOG_DEBUG, "    obuf unacked (1):    %d\n", obuf_get_unacked(&peer->obuf));
+    log_printf(LOG_DEBUG, "    obuf unacked (2):    %llu\n", peer->obuf.total_sent - peer->obuf.total_acked);
+    log_printf(LOG_DEBUG, "    obuf unread:         %d\n", obuf_get_unread(&peer->obuf));
+    log_printf(LOG_DEBUG, "    obuf->w: %d\n", peer->obuf.w);
+    log_printf(LOG_DEBUG, "    obuf->r: %d\n", peer->obuf.r);
+    log_printf(LOG_DEBUG, "    obuf->a: %d\n", peer->obuf.a);
 
     // Advance ACK pointer based on number received on opposite end
     peer->obuf.a = (peer->obuf.a + ack_increment) % peer->obuf.len;
@@ -2066,7 +2065,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
             }
             cache_hdr = lc->cache.bkwd.hdr_base;
             peer_id = lc->clnt_id;
-            printf("Writing to cache file: bkwd\n");
+            log_printf(LOG_DEBUG, "Writing to cache file: bkwd\n");
             break;
         case FDTYPE_USERCLNT:
             user_id = fd_i - POLL_UCSOCKS_OFF;
@@ -2078,7 +2077,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
             }
             cache_hdr = lc->cache.fwd.hdr_base;
             peer_id = lc->serv_id;
-            printf("Writing to cache file: fwd\n");
+            log_printf(LOG_DEBUG, "Writing to cache file: fwd\n");
             break;
         default:
             assert(0); // should never get here
@@ -2089,7 +2088,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     // EOF
     if (read_len == 0) {
         // Stage a packet to be sent when cache is emptied
-        printf("Hit EOF. Closing read end (fd %d)\n", fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "Hit EOF. Closing read end (fd %d)\n", fds[fd_i].fd);
         lc->pend_pkt.lc_eod = true;
         fds[fd_i].events &= ~(POLLIN);
         fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
@@ -2098,25 +2097,25 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     // Error
     else if (read_len < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            printf("Read return < 0\n");
+            log_printf(LOG_DEBUG, "Read return < 0\n");
             err_msg_errno(e, "read returned < 0");
             handle_disconnect(state, fds, fd_i, e);
             return -1;
         }
         else {
-            printf("Faulty trigger for pollin\n");
+            log_printf(LOG_DEBUG, "Faulty trigger for pollin\n");
             return 0;
         }
     }
     // Data read successfully
     else {
-        printf("%d bytes read\n", read_len);
+        log_printf(LOG_DEBUG, "%d bytes read\n", read_len);
 
         // Write to cache file
         if (cachefile_write(cache_hdr, buf, read_len, e) < 0) {
             return -1;
         }
-        printf("cachefile_get_write [src]: %llu\n", cachefile_get_write(cache_hdr));
+        log_printf(LOG_DEBUG, "cachefile_get_write [src]: %llu\n", cachefile_get_write(cache_hdr));
 
         // Trigger pollout on destination socket (non-SFN)
         lc->pend_pkt.lc_data = true;
@@ -2133,23 +2132,23 @@ static int handle_pollin(ConnectivityState *state, struct pollfd fds[],
 
     switch(get_fd_type(state, fd_i)) {
     case FDTYPE_LISTEN:
-        printf("FDTYPE_LISTEN POLLIN\n");
+        log_printf(LOG_DEBUG, "FDTYPE_LISTEN POLLIN\n");
         return handle_pollin_listen(state, fds, fd_i, e);
     case FDTYPE_USERSERV:
     case FDTYPE_USERCLNT:
-        printf("FDTYPE_USER**** POLLIN\n");
+        log_printf(LOG_DEBUG, "FDTYPE_USER**** POLLIN\n");
         if (has_so_error(fds[fd_i].fd, e)) {
             return handle_disconnect(state, fds, fd_i, e);
         }
         return handle_pollin_user(state, fds, fd_i, e);
     case FDTYPE_PEER:
-        printf("FDTYPE_PEER POLLIN\n");
+        log_printf(LOG_DEBUG, "FDTYPE_PEER POLLIN\n");
         if (has_so_error(fds[fd_i].fd, e)) {
             return handle_disconnect(state, fds, fd_i, e);
         }
         return handle_pollin_peer(state, fds, fd_i, e);
     case FDTYPE_TIMER:
-        printf("FDTYPE_TIMER POLLIN\n");
+        log_printf(LOG_DEBUG, "FDTYPE_TIMER POLLIN\n");
         return handle_pollin_timer(state, fds, fd_i, e);
     }
 
@@ -2184,7 +2183,7 @@ static int send_peer_sync(PeerState *peer, ErrorStatus *e) {
     assert(n_written == sizeof(unsigned long long));
     peer->sync_sent = true;
 
-    printf("SYNC-SEND on fd %d: %llu\n", peer->sock,
+    log_printf(LOG_DEBUG, "SYNC-SEND on fd %d: %llu\n", peer->sock,
         peer->ibuf.total_received);
     return 0;
 }
@@ -2200,12 +2199,12 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     bool more_data = false;
     int n_written;
 
-    //printf("send_packet\n");
+    //log_printf(LOG_DEBUG, "send_packet\n");
 
     if (peer->lc_iter == NULL) {
         peer->lc_iter = dict_iter_new(lcs);
         if (peer->lc_iter == NULL) {
-            printf("Note: send_packet: no logical connections\n");
+            log_printf(LOG_DEBUG, "Note: send_packet: no logical connections\n");
             return 0;
         }
     }
@@ -2225,7 +2224,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
             /*
             if (lc->close_state.received_eod) {
-                printf("send_packet cancelled: received close packet\n");
+                log_printf(LOG_DEBUG, "send_packet cancelled: received close packet\n");
                 //continue;
                 goto advance;
             }
@@ -2356,7 +2355,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
                     // Get avail. num bytes in cache
                     paylen = cachefile_get_readlen(f, peer_id);
-                    printf("cachefile_get_readlen: %llu\n", paylen);
+                    log_printf(LOG_DEBUG, "cachefile_get_readlen: %llu\n", paylen);
                     if (PKT_MAX_PAYLOAD_LEN < paylen) {
                         paylen = PKT_MAX_PAYLOAD_LEN;
                         out_of_space = true;
@@ -2371,7 +2370,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     // This should always succeed, since paylen <= readlen
                     hdr.off = cachefile_get_read(f, peer_id);
                     assert(paylen == cachefile_read(f, peer_id, buf, paylen, e));
-                    printf("cachefile_get_read [src]: %llu\n",
+                    log_printf(LOG_DEBUG, "cachefile_get_read [src]: %llu\n",
                     cachefile_get_read(f, peer_id));
 
                     hdr.len = paylen; // payload length
@@ -2450,10 +2449,10 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         // Adjust flags 
                         lc->pend_pkt.lc_eod = false;
                         lc->close_state.sent_eod = true;
-                        printf(">> sent_eod\n");
+                        log_printf(LOG_DEBUG, "sent_eod\n");
                         // Close half of LC
                         lc->close_state.fin_rd = true;
-                        printf(">> fin_rd\n");
+                        log_printf(LOG_DEBUG, "fin_rd\n");
                         //shutdown(sock, SHUT_RD);
                         // Close LC at end of loop
                     }
@@ -2494,9 +2493,9 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
                     lc->pend_pkt.lc_closed_wr = false;
                     lc->close_state.sent_closed_wr = true;
-                    printf(">> sent_closed_wr\n");
+                    log_printf(LOG_DEBUG, "sent_closed_wr\n");
                     lc->close_state.fin_wr = true;
-                    printf(">> fin_wr\n");
+                    log_printf(LOG_DEBUG, "fin_wr\n");
                     //shutdown(sock, SHUT_WR);
                     // Close LC at end of loop
                 }
@@ -2544,7 +2543,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     } // end while for LCs
 
     if (out_of_space) {
-        printf("Not enough space in obuf\n");
+        log_printf(LOG_DEBUG, "Not enough space in obuf\n");
     }
 
     // After assembling packets, write buffer
@@ -2559,7 +2558,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
 
     // Re-enabled POLLOUT if any data needs to be read
     if (obuf_get_unread(&peer->obuf) > 0) {
-        printf("Unread data in obuf\n");
+        log_printf(LOG_DEBUG, "Unread data in obuf\n");
         more_data = true;
     }
 
@@ -2631,7 +2630,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
 
     // Find how much we can write
     nbytes = cachefile_get_readlen(cache, this_id);
-    printf("cachefile_get_readlen: %llu\n", nbytes);
+    log_printf(LOG_DEBUG, "cachefile_get_readlen: %llu\n", nbytes);
     if (PKT_MAX_PAYLOAD_LEN < nbytes) {
         nbytes = PKT_MAX_PAYLOAD_LEN;
         unread_data = true;
@@ -2646,7 +2645,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     if (nbytes > 0) {
         // Read that number of bytes
         assert(nbytes == cachefile_read(cache, this_id, buf, nbytes, e));
-        printf("cachefile_get_read [dst]: %llu\n", cachefile_get_read(cache,
+        log_printf(LOG_DEBUG, "cachefile_get_read [dst]: %llu\n", cachefile_get_read(cache,
             this_id));
 
         // Schedule ack packet
@@ -2654,14 +2653,14 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
             //lc->pending_cmd[lc->clnt_id] = PEND_LC_ACK;
             lc->pend_pkt.lc_ack = true;
             fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
-            //printf("Set POLLOUT on clnt, fd %d\n",
+            //log_printf(LOG_DEBUG, "Set POLLOUT on clnt, fd %d\n",
                 //fds[lc->clnt_id + POLL_PSOCKS_OFF].fd);
         }
         else {
             //lc->pending_cmd[lc->serv_id] = PEND_LC_ACK;
             lc->pend_pkt.lc_ack = true;
             fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
-            //printf("Set POLLOUT on serv, fd %d\n",
+            //log_printf(LOG_DEBUG, "Set POLLOUT on serv, fd %d\n",
                 //fds[lc->serv_id + POLL_PSOCKS_OFF].fd);
         }
         
@@ -2675,7 +2674,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         // delivered is if the user program itself closes the connection before it
         // has a chance to receive all the data. This is not our problem.
         cachefile_ack(cache, nbytes);
-        printf("cachefile_get_ack [dst]: %llu\n", cachefile_get_ack(cache));
+        log_printf(LOG_DEBUG, "cachefile_get_ack [dst]: %llu\n", cachefile_get_ack(cache));
         // TODO [future work]: accumulate ACKs to reduce their number, possibly
         // triggering them with timerfd/poll, like the reconnection system.
 
@@ -2699,9 +2698,9 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         // A received EOD command should only be processed after all data has
         // been read from the cache and sent to the user socket. 
         lc->close_state.fin_wr = true;
-        printf(">> fin_wr\n");
+        log_printf(LOG_DEBUG, "fin_wr\n");
         // trigger EOF on user sock
-        printf("Shutdown write end on fd %d\n", fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "Shutdown write end on fd %d\n", fds[fd_i].fd);
         if (shutdown(fds[fd_i].fd, SHUT_WR) < 0) {
             err_msg_errno(e, "shutdown");
             return -1;
@@ -2736,17 +2735,17 @@ static int handle_pollout_userserv(ConnectivityState *state, struct pollfd fds[]
 
     switch (state->user_serv_conns[i].sock_status) {
     case USSOCK_CONNECTING: // was connecting
-        //printf("handle_pollout_userserv: USSOCK_CONNECTING\n");
+        //log_printf(LOG_DEBUG, "handle_pollout_userserv: USSOCK_CONNECTING\n");
         fds[fd_i].events = POLLIN;// | POLLRDHUP;
         // TODO: enable POLLOUT?
         state->user_serv_conns[i].sock_status = USSOCK_CONNECTED;
         /*if (set_so_keepalive(fds[fd_i].fd, e) < 0) {
             return -1;
         }*/
-        printf("Connected (fd %d)\n", fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "Connected (fd %d)\n", fds[fd_i].fd);
         break;
     case USSOCK_CONNECTED: // already connected, data to write
-        //printf("handle_pollout_userserv: USSOCK_CONNECTED\n");
+        //log_printf(LOG_DEBUG, "handle_pollout_userserv: USSOCK_CONNECTED\n");
         // TODO: read from cache and write to server socket
         if (write_to_user_sock(state, fds, fd_i, FDTYPE_USERSERV, e) < 0) {
             return -1;
@@ -2775,13 +2774,13 @@ static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
 
     switch (state->peers[i].sock_status) {
     case PSOCK_CONNECTING: // was connecting
-        //printf("handle_pollout_peer: PSOCK_CONNECTING\n");
+        //log_printf(LOG_DEBUG, "handle_pollout_peer: PSOCK_CONNECTING\n");
         fds[fd_i].events = POLLIN | POLLRDHUP | POLLOUT;
         state->peers[i].sock_status = PSOCK_CONNECTED;
-        printf("Connected (fd %d)\n", fds[fd_i].fd);
+        log_printf(LOG_DEBUG, "Connected (fd %d)\n", fds[fd_i].fd);
         break;
     case PSOCK_CONNECTED: // already connected, data to write
-        //printf("handle_pollout_peer: PSOCK_CONNECTED\n");
+        //log_printf(LOG_DEBUG, "handle_pollout_peer: PSOCK_CONNECTED\n");
         // Send sync before resuming (or starting) data transmission
         if (!state->peers[i].sync_sent) {
             // TODO: cheap hack -- read comments at definition of sync_peers
@@ -2799,7 +2798,7 @@ static int handle_pollout_peer(ConnectivityState *state, struct pollfd fds[],
             }
         }
         else {
-            printf("Sync sent, waiting to receive\n");
+            log_printf(LOG_DEBUG, "Sync sent, waiting to receive\n");
         }
         break;
     case PSOCK_WAITING:
@@ -2829,18 +2828,18 @@ static int handle_pollout(ConnectivityState *state, struct pollfd fds[],
     switch(get_fd_type(state, fd_i)) {
         break;
     case FDTYPE_USERCLNT:
-        printf("FDTYPE_USERCLNT POLLOUT\n");
+        log_printf(LOG_DEBUG, "FDTYPE_USERCLNT POLLOUT\n");
         return handle_pollout_userclnt(state, fds, fd_i, e);
         break;
     case FDTYPE_USERSERV:
-        printf("FDTYPE_USERSERV POLLOUT\n");
+        log_printf(LOG_DEBUG, "FDTYPE_USERSERV POLLOUT\n");
         return handle_pollout_userserv(state, fds, fd_i, e);
     case FDTYPE_PEER:
-        printf("FDTYPE_PEER POLLOUT\n");
+        log_printf(LOG_DEBUG, "FDTYPE_PEER POLLOUT\n");
         return handle_pollout_peer(state, fds, fd_i, e);
     case FDTYPE_TIMER:
     case FDTYPE_LISTEN:
-        printf("unsupported POLLOUT type\n");
+        log_printf(LOG_DEBUG, "unsupported POLLOUT type\n");
         break;
     }
 
@@ -2861,12 +2860,12 @@ static int try_unpause(ConnectivityState *state, struct pollfd fds[],
 
             // Still paused? Disable pollout.
             if (obuf_is_paused(&peer->obuf)) {
-                printf("PAUSE: disabled POLLOUT on fd %d\n", peer->sock);
+                log_printf(LOG_DEBUG, "PAUSE: disabled POLLOUT on fd %d\n", peer->sock);
                 fds[i + POLL_PSOCKS_OFF].events &= ~POLLOUT;
             }
             // Unpaused: enable pollout
             else {
-                printf("PAUSE: enabled POLLOUT on fd %d\n", peer->sock);
+                log_printf(LOG_DEBUG, "PAUSE: enabled POLLOUT on fd %d\n", peer->sock);
                 fds[i + POLL_PSOCKS_OFF].events |= POLLOUT;
             }
         }
@@ -2884,9 +2883,9 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
     bool handled_fd;
     int fd_remaining;
 
-    printf("\n\n========== POLL ========== #%u\n", _poll_num_iter++);
+    log_printf(LOG_DEBUG, "\n\n========== POLL ========== #%u\n", _poll_num_iter++);
     status = poll(fds, POLL_NUM_FDS, -1);
-    printf("(poll returned: %d fds)\n", status);
+    log_printf(LOG_DEBUG, "(poll returned: %d fds)\n", status);
 
     // Handle errors
     if (status <= -1) {
@@ -2917,16 +2916,16 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 continue;
             }
 
-            printf("\n------------------\n");
+            log_printf(LOG_DEBUG, "\n------------------\n");
             print_sock_info(fds[i].fd);
 
             // Event: fd not open
             if (fds[i].revents & POLLNVAL) {
                 --fd_remaining;
-                printf("POLLNVAL\n");
+                log_printf(LOG_DEBUG, "POLLNVAL\n");
                 // For this case, this is probably a bug and not the result of
                 // weird runtime conditions. Disable any further events.
-                printf("Warning: disabled events on fds[%d]; fd was %d, now is -1.\n", i, fds[i].fd);
+                log_printf(LOG_DEBUG, "Warning: disabled events on fds[%d]; fd was %d, now is -1.\n", i, fds[i].fd);
                 assert(0); // TODO: remove this and actually handle the error
                 status = handle_disconnect(state, fds, i, e);
                 if (status < 0) {
@@ -2939,7 +2938,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             // Event: socket closed
             if (fds[i].revents & POLLERR) {
                 --fd_remaining;
-                printf("POLLERR\n");
+                log_printf(LOG_DEBUG, "POLLERR\n");
                 status = handle_disconnect(state, fds, i, e);
                 if (status < 0) {
                     err_show(e);
@@ -2955,7 +2954,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             // Can read still until EOF.
             if (fds[i].revents & POLLHUP) {
                 handled_fd = true;
-                printf("POLLHUP\n");
+                log_printf(LOG_DEBUG, "POLLHUP\n");
                 status = handle_pollhup(state, fds, i, e);
                 if (status < 0) {
                     err_show(e);
@@ -2965,7 +2964,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             // Event: peer closed writing half of connection
             if (fds[i].revents & POLLRDHUP) {
                 handled_fd = true;
-                printf("POLLRDHUP\n");
+                log_printf(LOG_DEBUG, "POLLRDHUP\n");
                 status = handle_pollrdhup(state, fds, i, e);
                 if (status < 0) {
                     err_show(e);
@@ -3008,7 +3007,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
 
 #ifdef __TEST
 void test() {
-    printf("Running global test function...\n\n\n");
+    log_printf(LOG_DEBUG, "Running global test function...\n\n\n");
     //__test_error();
     //__test_dict();
     __test_caching();
@@ -3034,13 +3033,13 @@ int main(int argc, char **argv) {
     err_init(&e);
 
     if (0 != read_config_file(argv[1], &config)) {
-        printf("\nread_config_file: fail\n");
+        log_printf(LOG_DEBUG, "\nread_config_file: fail\n");
         exit(EXIT_FAILURE);
     }
 
     // TODO: TEST! does this work with multiple clients/servers?
     if (rs_apply(&config) != 0) {
-        fprintf(stderr, "Failed to apply nft ruleset\n");
+        log_printf(LOG_CRITICAL, "Failed to apply nft ruleset\n");
         exit(EXIT_FAILURE);
     }
 
@@ -3080,10 +3079,10 @@ int main(int argc, char **argv) {
     // TODO: clean up any LCs
 
     err_free(&e);
-    printf("Done :)\n");
+    log_printf(LOG_DEBUG, "Done :)\n");
 
     if (rs_cleanup() != 0) {
-        fprintf(stderr, "Failed to cleanup nft ruleset\n");
+        log_printf(LOG_CRITICAL, "Failed to cleanup nft ruleset\n");
         exit(EXIT_FAILURE);
     }
 
@@ -3093,12 +3092,12 @@ int main(int argc, char **argv) {
 
 #ifdef __TEST
 void __print_obuf(WriteBuf *obuf) {
-    printf("OBUF\n", peer->sock);
-    printf("  obuf.total_sent: %llu\n", obuf.total_sent);
-    printf("  obuf.total_acked:   %llu\n", obuf.total_acked);
-    printf("  obuf->w: %d\n", peer->obuf.w);
-    printf("  obuf->r: %d\n", peer->obuf.r);
-    printf("  obuf->a: %d\n", peer->obuf.a);
+    log_printf(LOG_DEBUG, "OBUF\n", peer->sock);
+    log_printf(LOG_DEBUG, "  obuf.total_sent: %llu\n", obuf.total_sent);
+    log_printf(LOG_DEBUG, "  obuf.total_acked:   %llu\n", obuf.total_acked);
+    log_printf(LOG_DEBUG, "  obuf->w: %d\n", peer->obuf.w);
+    log_printf(LOG_DEBUG, "  obuf->r: %d\n", peer->obuf.r);
+    log_printf(LOG_DEBUG, "  obuf->a: %d\n", peer->obuf.a);
 }
 
 void __test_obuf() {
