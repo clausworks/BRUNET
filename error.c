@@ -10,8 +10,9 @@
 #include "error.h"
 #include "errnoname.h"
 
-static void _log_printf(bool show_prefix, InfoLevel level, char *fmt, va_list ap) {
+static int _log_printf(bool show_prefix, InfoLevel level, char *fmt, va_list ap) {
     FILE *outfile;
+    int status;
 
     switch (level) {
         case LOG_DEBUG:
@@ -29,38 +30,49 @@ static void _log_printf(bool show_prefix, InfoLevel level, char *fmt, va_list ap
             assert(0);
     }
 
-    switch (level) {
-        case LOG_DEBUG:
-            fprintf(outfile, "[DEBUG] ");
-            break;
-        case LOG_INFO:
-            fprintf(outfile, "[INFO]  ");
-            break;
-        case LOG_ERROR:
-            fprintf(outfile, "[ERROR] ");
-            break;
-        case LOG_CRITICAL:
-            fprintf(outfile, "[ERROR] ");
-            break;
-        default:
-            assert(0);
+    if (show_prefix) {
+        switch (level) {
+            case LOG_DEBUG:
+                fprintf(outfile, "[DEBUG] ");
+                break;
+            case LOG_INFO:
+                fprintf(outfile, "[INFO]  ");
+                break;
+            case LOG_ERROR:
+                fprintf(outfile, "[ERROR] ");
+                break;
+            case LOG_CRITICAL:
+                fprintf(outfile, "[ERROR] ");
+                break;
+            default:
+                assert(0);
+        }
     }
 
-    vfprintf(outfile, fmt, ap);
+    status = vfprintf(outfile, fmt, ap);
+    return status;
 }
 
-void raw_log_printf(InfoLevel level, char *fmt, ...) {
+int raw_log_printf(InfoLevel level, char *fmt, ...) {
     va_list ap;
+    int status;
+
     va_start(ap, fmt);
-    _log_printf(false, level, fmt, ap);
+    status = _log_printf(false, level, fmt, ap);
     va_end(ap);
+
+    return status;
 }
 
-void log_printf(InfoLevel level, char *fmt, ...) {
+int log_printf(InfoLevel level, char *fmt, ...) {
     va_list ap;
+    int status;
+
     va_start(ap, fmt);
-    _log_printf(true, level, fmt, ap);
+    status = _log_printf(true, level, fmt, ap);
     va_end(ap);
+
+    return status;
 }
 
 // Derived from make_message function at `man 3 printf`

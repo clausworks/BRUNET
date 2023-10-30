@@ -18,8 +18,8 @@ typedef struct {
     char *msg;
 } ErrorStatus;
 
-void log_printf(InfoLevel, char *, ...);
-void raw_log_printf(InfoLevel, char *, ...);
+int log_printf(InfoLevel, char *, ...);
+int raw_log_printf(InfoLevel, char *, ...);
 void err_init(ErrorStatus *);
 void err_msg(ErrorStatus *, char *, ...);
 void err_msg_errno(ErrorStatus *, char *, ...);
