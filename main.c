@@ -2562,22 +2562,24 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         }
 
         if (can_close_lc(lc)) {
+            // If there is only one LC, deleting will invalidate the iterator.
+            // Set it to NULL so the loop will break.
             if (lc == dict_iter_read(peer->lc_iter)) {
-                // Current iterator is invalid
-                assert(dict_iter_new(lcs) == NULL);
                 peer->lc_iter = NULL;
             }
-            // Will delete "stop" marker. Advance it.
+            // If we're deleting the LC at the stop marker, we should invalidate
+            // it as well. Otherwise, advance it.
             if (lc == dict_iter_read(stop)) {
                 if (dict_iter_hasnext(stop)) {
                     stop = dict_iter_next(stop);
                 }
                 else {
                     stop = dict_iter_new(lcs);
-                    if (peer->lc_iter == NULL) {
-                        assert(stop == NULL);
-                    }
-                    // If the last item was deleted, stop == NULL
+                }
+                // If the new stop marker is still the current LC, invalidate
+                // it.
+                if (lc == dict_iter_read(stop)) {
+                    stop = NULL;
                 }
             }
         }
