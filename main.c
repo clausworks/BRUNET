@@ -1725,16 +1725,13 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     printf("cachefile_get_ack [src]: %llu\n", cachefile_get_ack(f));
 
     // If this is the end of the data, we've reached the end and should trigger
-    // a send for the LC_EOD packet.
-    // FIXME don't allow sending LC_EOD until all data has been acked?
-    /*
+    // a send for the LC_EOD packet, in case it doesn't get triggered otherwise.
     if (lc->pend_pkt.lc_eod) {
         if (cachefile_get_unacked(f) == 0) {
-            printf("Last LC_ACK received. POLLOUT for LC_EOD\n");
+            printf("Last LC_ACK received. POLLOUT set for LC_EOD\n");
             fds[fd_i].events |= POLLOUT;
         }
     }
-    */
 
     // TODO [future work]: pass this ACK packet to other peers
 
@@ -2416,7 +2413,9 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     f = lc->cache.bkwd.hdr_base;
                 }
 
-                // Only send if all data has been acked
+                // Only send if all data has been sent
+                // NOTE: process_lc_ack needs to re-enable POLLOUT after the
+                // last ACK has been received so that this packet can be sent.
                 if (cachefile_get_unacked(f) == 0) {
                     pktlen = sizeof(PktHdr);
 
