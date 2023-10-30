@@ -10,9 +10,7 @@
 #include "error.h"
 #include "errnoname.h"
 
-void log_printf(InfoLevel level, char *fmt, ...) {
-    va_list ap;
-
+static void _log_printf(bool show_prefix, InfoLevel level, char *fmt, va_list ap) {
     FILE *outfile;
 
     switch (level) {
@@ -27,6 +25,8 @@ void log_printf(InfoLevel level, char *fmt, ...) {
         case LOG_CRITICAL:
             outfile = stderr;
             break;
+        default:
+            assert(0);
     }
 
     switch (level) {
@@ -46,13 +46,25 @@ void log_printf(InfoLevel level, char *fmt, ...) {
             assert(0);
     }
 
-    va_start(ap, fmt);
     vfprintf(outfile, fmt, ap);
+}
+
+void raw_log_printf(InfoLevel level, char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    _log_printf(false, level, fmt, ap);
+    va_end(ap);
+}
+
+void log_printf(InfoLevel level, char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    _log_printf(true, level, fmt, ap);
     va_end(ap);
 }
 
 // Derived from make_message function at `man 3 printf`
-char *alloc_msg(const char *fmt, va_list ap) {
+static char *alloc_msg(const char *fmt, va_list ap) {
     int n = 0;
     size_t size = 0;
     char *p = NULL;

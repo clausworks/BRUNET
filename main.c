@@ -2883,7 +2883,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
     bool handled_fd;
     int fd_remaining;
 
-    log_printf(LOG_DEBUG, "\n\n========== POLL ========== #%u\n", _poll_num_iter++);
+    raw_log_printf(LOG_DEBUG, "\n\n========== POLL ========== #%u\n", _poll_num_iter++);
     status = poll(fds, POLL_NUM_FDS, -1);
     log_printf(LOG_DEBUG, "(poll returned: %d fds)\n", status);
 
@@ -2916,7 +2916,7 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
                 continue;
             }
 
-            log_printf(LOG_DEBUG, "\n------------------\n");
+            raw_log_printf(LOG_DEBUG, "\n------------------\n");
             print_sock_info(fds[i].fd);
 
             // Event: fd not open
