@@ -180,7 +180,7 @@ typedef struct {
     struct in_addr addr;
     int sock;
     PeerSockStatus sock_status; // true if sock represents a timer fd
-    dictiter_t lc_iter;
+    //dictiter_t lc_iter;
     WriteBuf obuf;
     PktReadBuf ibuf;
     bool sync_received;

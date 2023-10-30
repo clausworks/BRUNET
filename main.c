@@ -2205,7 +2205,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     bool out_of_space = false;
     bool more_data = false;
     int n_written;
-    dictiter_t stop;
+    dictiter_t lc_iter = dict_iter_new(lcs);
 
     // Update obuf ack counter
     if (obuf_update_ack(&peer->obuf, peer->sock, true, e) < 0) {
@@ -2213,28 +2213,10 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
     
-    // Restart/initialize iterator
-    if (peer->lc_iter == NULL) {
-        peer->lc_iter = dict_iter_new(lcs);
-        // Still NULL? List is empty
-        if (peer->lc_iter == NULL) {
-            log_printf(LOG_DEBUG, "log_conns is empty\n");
-            return 0;
-        }
-    }
-
-    // Stop looping when we get to our starting spot in the list.
-    stop = peer->lc_iter;
-
-    // This loop performs a circular loop on the logical connections. It repeats
-    // until one of the following occurs:
-    // a) The LC it started on has been reached again (full loop complete)
-    // b) The output buffer is filled up
-    //      -> In this case, we'll start from where we left off
-    while (1) {
+    while (lc_iter != NULL) {
         int pktlen;//, status;
         FDType fdtype;
-        lc = (LogConn *)dict_iter_read(peer->lc_iter);
+        lc = (LogConn *)dict_iter_read(lc_iter);
         // Non-SFN case: look for LC 
         if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
 
@@ -2529,67 +2511,12 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         // Below, attempt to close a logical connection. 
         //
         // We need to do this AFTER the iterator has advanced. Destroying the LC
-        // causes it to be removed from the linked list, which could messes up the
-        // iterator if it's removed.
+        // frees the underlying memory.
         
-        // Advance LC iterator
-        /* if (!dict_iter_hasnext(peer->lc_iter)) {
-            // Restart
-            peer->lc_iter = dict_iter_new(lcs);
-            if (peer->lc_iter == NULL) {
-                log_printf(LOG_DEBUG, "send_packet: no logical connections\n");
-                //TODO: break?
-            }
-            if (try_close_lc(state, lc, fdtype, e) < 0) {
-                return -1;
-            }
-        }
-        else {
-            // Continue to next
-            peer->lc_iter = dict_iter_next(peer->lc_iter);
-            if (try_close_lc(state, lc, fdtype, e) < 0) {
-                return -1;
-            }
-        }*/
-
-        // Normal increment
-        if (dict_iter_hasnext(peer->lc_iter)) {
-            peer->lc_iter = dict_iter_next(peer->lc_iter);
-        }
-        // At end: loop to front of list
-        else {
-            peer->lc_iter = dict_iter_new(lcs);
-        }
-
-        if (can_close_lc(lc)) {
-            // If there is only one LC, deleting will invalidate the iterator.
-            // Set it to NULL so the loop will break.
-            if (lc == dict_iter_read(peer->lc_iter)) {
-                peer->lc_iter = NULL;
-            }
-            // If we're deleting the LC at the stop marker, we should invalidate
-            // it as well. Otherwise, advance it.
-            if (lc == dict_iter_read(stop)) {
-                if (dict_iter_hasnext(stop)) {
-                    stop = dict_iter_next(stop);
-                }
-                else {
-                    stop = dict_iter_new(lcs);
-                }
-                // If the new stop marker is still the current LC, invalidate
-                // it.
-                if (lc == dict_iter_read(stop)) {
-                    stop = NULL;
-                }
-            }
-        }
-
+        // At end of loop, lc_iter will be NULL
+        lc_iter = dict_iter_next(lc_iter);
         if (try_close_lc(state, lc, fdtype, e) < 0) {
             return -1;
-        }
-
-        if (peer->lc_iter == stop) {
-            break;
         }
 
     } // end while for LCs
