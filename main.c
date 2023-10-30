@@ -441,36 +441,36 @@ static void print_pkthdr(PktHdr *hdr) {
     log_printf(LOG_DEBUG, "PACKET ");
     switch (hdr->type) {
         case PKTTYPE_LC_NEW:
-            log_printf(LOG_DEBUG, "LC_NEW");
+            raw_log_printf(LOG_DEBUG, "LC_NEW");
             break;
         case PKTTYPE_LC_EOD:
-            log_printf(LOG_DEBUG, "LC_EOD");
+            raw_log_printf(LOG_DEBUG, "LC_EOD");
             break;
         case PKTTYPE_LC_CLOSED_WR:
-            log_printf(LOG_DEBUG, "LC_CLOSED_WR");
+            raw_log_printf(LOG_DEBUG, "LC_CLOSED_WR");
             break;
         case PKTTYPE_LC_ACK:
-            log_printf(LOG_DEBUG, "LC_ACK");
+            raw_log_printf(LOG_DEBUG, "LC_ACK");
             break;
         case PKTTYPE_LC_DATA:
-            log_printf(LOG_DEBUG, "LC_DATA");
+            raw_log_printf(LOG_DEBUG, "LC_DATA");
             break;
         default:
             assert(0);
     }
     switch (hdr->dir) {
         case PKTDIR_FWD:
-            log_printf(LOG_DEBUG, " (clnt->serv)");
+            raw_log_printf(LOG_DEBUG, " (clnt->serv)");
             break;
         case PKTDIR_BKWD:
-            log_printf(LOG_DEBUG, " (serv->clnt)");
+            raw_log_printf(LOG_DEBUG, " (serv->clnt)");
             break;
         default:
             assert(0);
     }
-    log_printf(LOG_DEBUG, ": lc_id=%llu, ", hdr->lc_id);
-    log_printf(LOG_DEBUG, "off=%llu, ", hdr->off);
-    log_printf(LOG_DEBUG, "len=%hu\n", hdr->len);
+    raw_log_printf(LOG_DEBUG, ": lc_id=%llu, ", hdr->lc_id);
+    raw_log_printf(LOG_DEBUG, "off=%llu, ", hdr->off);
+    raw_log_printf(LOG_DEBUG, "len=%hu\n", hdr->len);
 }
 
 
