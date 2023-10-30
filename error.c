@@ -10,9 +10,19 @@
 #include "error.h"
 #include "errnoname.h"
 
+static InfoLevel _min_log_level;
+
+void set_global_log_level(InfoLevel min_level) {
+    _min_log_level = min_level;
+}
+
 static int _log_printf(bool show_prefix, InfoLevel level, char *fmt, va_list ap) {
     FILE *outfile;
     int status;
+
+    if (level < _min_log_level) {
+        return 0;
+    }
 
     switch (level) {
         case LOG_DEBUG:

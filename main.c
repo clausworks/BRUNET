@@ -843,7 +843,7 @@ static void init_poll_fds(struct pollfd fds[], ConnectivityState *state) {
  * this is handled.
  */
 // TODO: update for timers?
-static int connect_to_peers(ConnectivityState *state, struct pollfd fds[], ErrorStatus *e) {
+static void connect_to_peers(ConnectivityState *state, struct pollfd fds[], ErrorStatus *e) {
     int s;
 
     for (int i = 0; i < state->n_peers; ++i) {
@@ -862,8 +862,6 @@ static int connect_to_peers(ConnectivityState *state, struct pollfd fds[], Error
         state->peers[i].sock = s;
         state->peers[i].sock_status = PSOCK_CONNECTING;
     }
-
-    return 0;
 }
 
 static void add_peer(ConnectivityState *state, int *p,
@@ -3027,6 +3025,8 @@ int main(int argc, char **argv) {
     return 0;
 #else
 
+    set_global_log_level(LOG_DEBUG);
+
     init_sighandlers();
     cache_global_init();
 
@@ -3053,23 +3053,15 @@ int main(int argc, char **argv) {
         err_init(fd_errors + i);
     }
 
-    connect_to_peers(&state, poll_fds, &e); // TODO: handle errors
+    connect_to_peers(&state, poll_fds, &e);
 
     while (1) {
-        // TODO: logical connections
-        // TODO: do we need this any more? Functionality duplicated
-        update_poll_fds(poll_fds, &state); // TODO: update based off `changed`
+        update_poll_fds(poll_fds, &state);
 
         if (poll_once(&state, poll_fds, fd_errors, &e) != 0) {
             err_show(&e);
             exit(EXIT_FAILURE);
         }
-
-        // Print any errors (TODO: make this more efficient)
-        /*for (int i = 0; i < POLL_NUM_FDS; ++i) {
-            err_show_if_present(fd_errors + i);
-            err_reset(fd_errors + i);
-        }*/
     }
 
     for (int i = 0; i < POLL_NUM_FDS; ++i) {

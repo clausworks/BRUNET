@@ -1,11 +1,14 @@
 #ifndef ERROR_H
 #define ERROR_H
 
+#include <limits.h>
+
 typedef enum {
-    LOG_DEBUG,
-    LOG_INFO,
-    LOG_ERROR,
-    LOG_CRITICAL,
+    LOG_DEBUG = 0,
+    LOG_INFO = 1,
+    LOG_ERROR = 2,
+    LOG_CRITICAL = 3,
+    _LOG_NOTHING = INT_MAX
 } InfoLevel;
 
 typedef enum {
@@ -18,6 +21,7 @@ typedef struct {
     char *msg;
 } ErrorStatus;
 
+void set_global_log_level(InfoLevel);
 int log_printf(InfoLevel, char *, ...);
 int raw_log_printf(InfoLevel, char *, ...);
 void err_init(ErrorStatus *);
