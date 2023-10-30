@@ -2196,16 +2196,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
     bool out_of_space = false;
     bool more_data = false;
     int n_written;
-
-    //log_printf(LOG_DEBUG, "send_packet\n");
-
-    if (peer->lc_iter == NULL) {
-        peer->lc_iter = dict_iter_new(lcs);
-        if (peer->lc_iter == NULL) {
-            log_printf(LOG_DEBUG, "Note: send_packet: no logical connections\n");
-            return 0;
-        }
-    }
+    unsigned start_lc_id;
 
     // Update obuf ack counter
     if (obuf_update_ack(&peer->obuf, peer->sock, true, e) < 0) {
@@ -2213,22 +2204,29 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         return -1;
     }
     
-    // Continue loop, potentially from last time
+    // This loop performs a circular loop on the logical connections. It repeats
+    // until one of the following occurs:
+    // a) The LC it started on has been reached again (full loop complete)
+    // b) The output buffer is filled up
+    //      -> In this case, we'll start from where we left off
     while (1) {
+        // Restart/initialize iterator
+        if (peer->lc_iter == NULL) {
+            peer->lc_iter = dict_iter_new(lcs);
+            if (peer->lc_iter == NULL) {
+                log_printf(LOG_DEBUG, "Note: send_packet: no logical connections\n");
+                return 0;
+            }
+        }
+
         lc = (LogConn *)dict_iter_read(peer->lc_iter);
         int pktlen;
         FDType fdtype;
         // Non-SFN case: look for LC 
         if (lc->serv_id == peer_id || lc->clnt_id == peer_id) {
-            /*
-            if (lc->close_state.received_eod) {
-                log_printf(LOG_DEBUG, "send_packet cancelled: received close packet\n");
-                //continue;
-                goto advance;
-            }
-            */
 
-            // Determine *user* socket type
+            // Determine *user* socket type (not peer socket that we're going to
+            // send the packet on).
             if (lc->serv_id == peer_id) {
                 fdtype = FDTYPE_USERCLNT;
             }
@@ -2515,21 +2513,18 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // final destination
         }
 
-
-        // We use a goto here so "goto advance" is like "continue"
-//advance:
-        // Destroy LC if it's marked as finished for read and write to user sock
+        // Below, attempt to close a logical connection. 
+        //
         // We need to do this AFTER the iterator has advanced. Destroying the LC
         // causes it to be removed from the linked list, which could messes up the
         // iterator if it's removed.
         
-        // TODO: what happens when this gets to the end of the list?
         // Advance LC iterator
         if (!dict_iter_hasnext(peer->lc_iter)) {
+            peer->lc_iter = NULL; // restart loop from beginning
             if (try_close_lc(state, lc, fdtype, e) < 0) {
                 return -1;
             }
-            break;
         }
         else {
             peer->lc_iter = dict_iter_next(peer->lc_iter);
