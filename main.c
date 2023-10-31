@@ -1413,10 +1413,12 @@ static int handle_peer_conn(ConnectivityState *state, struct pollfd fds[],
     switch (state->peers[peer_id].sock_status) {
 
     case PSOCK_CONNECTED:
-        log_printf(LOG_DEBUG, "cleanup obuf before close...\n");
+        log_printf(LOG_DEBUG, "closing existing peer conn\n");
         //obuf_update_ack(&state->peers[peer_id].obuf,
             //state->peers[peer_id].sock, true, e);
         obuf_close_cleanup(&state->peers[peer_id].obuf);
+        state->peers[peer_id].sync_sent = false;
+        state->peers[peer_id].sync_received = false;
 
     case PSOCK_WAITING: // timerfd
 
