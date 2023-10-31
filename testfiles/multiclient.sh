@@ -1,10 +1,12 @@
-testfile=$1
-num_conns=$2
+addr=$1
+port=$2
+testfile=$3
+num_conns=$4
 
 for i in $(seq 1 $num_conns); do
     outfile=test${i}.out
-    echo "nc -q 0 10.0.0.2 1234 < $testfile > $outfile &"
-    nc -q 0 10.0.0.2 1234 < $testfile > $outfile &
+    echo "nc -q 0 $addr $port < $testfile > $outfile &"
+    nc -q 0 $addr $port < $testfile > $outfile &
 done
 wait
 for i in $(seq 1 $num_conns); do
