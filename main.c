@@ -307,11 +307,13 @@ int attempt_connect(struct in_addr serv_ip, in_port_t serv_port,
     // bind to local address
     if (bind(sock, (struct sockaddr *)(&clnt_addr),
         sizeof(struct sockaddr_in)) < 0) {
+
+        int old_errno = errno;
         
         // Acceptable if this fails. Failure to bind is not catastrophic.
 
         log_printf(LOG_DEBUG, "attempt_connect: (warning) failed to bind to %s failed\n", inet_ntoa(clnt_ip));
-        perror("bind");
+        log_printf(LOG_DEBUG, "%s\n", strerror(old_errno));
         // do nothing... see note right below
 
         //close(sock); // reenable after handling return value properly
@@ -874,7 +876,7 @@ static void connect_to_peers(ConnectivityState *state, struct pollfd fds[], Erro
 }
 
 static void add_peer(ConnectivityState *state, int *p,
-    struct in_addr addr, struct in_addr this_dev) {
+    struct in_addr addr) {
 
     bool found = false;
     for (int j = 0; j < *p; ++j) { // TODO: enforce POLL_NUM_PSOCKS
@@ -887,19 +889,16 @@ static void add_peer(ConnectivityState *state, int *p,
         // Initialize PeerState object
         state->peers[*p].addr = addr;
         state->peers[*p].sock = -1; 
-        if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
+        /*if (addr.s_addr == this_dev.s_addr) { // IP is not actually a peer
             state->peers[*p].sock_status = PSOCK_THIS_DEVICE;
             state->this_dev_id = *p;
             log_printf(LOG_DEBUG, "this_dev_id = %d\n", *p);
-        }
-        else {
-            state->peers[*p].sock_status = PSOCK_INVALID;
-        }
+        }*/
+        state->peers[*p].sock_status = PSOCK_INVALID;
         obuf_reset(&state->peers[*p].obuf);
         ibuf_init(&state->peers[*p].ibuf);
 
-
-        log_printf(LOG_DEBUG, "Added peer %s\n", inet_ntoa(addr));
+        log_printf(LOG_INFO, "Added device %s\n", inet_ntoa(addr));
         *p += 1;
     }
 }
@@ -908,6 +907,8 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
     struct in_addr c; // current client addr
     struct in_addr s; // current server addr
     int p = 0; // index into state->peers
+    PeerState *result; // result of search
+    PeerState dummy;
 
     // Note: memset occurred in parent function
 
@@ -917,16 +918,26 @@ static void init_peers(ConnectivityState *state, ConfigFileParams *config) {
         // Find unique IP addresses
         c = config->pairs[i].clnt;
         s = config->pairs[i].serv;
-        add_peer(state, &p, c, config->this_dev);
-        add_peer(state, &p, s, config->this_dev);
+        add_peer(state, &p, c);
+        add_peer(state, &p, s);
     }
     
     state->n_peers = p;
 
-    log_printf(LOG_DEBUG, "Found %d peers\n", p);
+    log_printf(LOG_INFO, "Found %d devices\n", p);
 
     // Sort peers list
     qsort(state->peers, state->n_peers, sizeof(PeerState), _peer_compare_addr);
+
+    // Determine this_dev_id.
+    // It is important to do this AFTER sorting.
+    dummy.addr = config->this_dev;
+    result = bsearch(&dummy, state->peers, state->n_peers,
+        sizeof(PeerState), _peer_compare_addr);
+    assert(result != NULL);
+    state->this_dev_id = result - state->peers;
+    result->sock_status = PSOCK_THIS_DEVICE;
+    log_printf(LOG_DEBUG, "this_dev_id = %d\n", state->this_dev_id);
 }
 
 static int init_connectivity_state(ConnectivityState *state,
@@ -2025,6 +2036,8 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
             // See comments for receive_peer_sync.
             fds[fd_i].events = POLLIN | POLLOUT | POLLRDHUP;
             receive_peer_sync(&state->peers[i], e);
+            log_printf(LOG_INFO, "Connection live with peer %s",
+                inet_ntoa(state->peers[i].addr));
             return 0;
         }
         break;

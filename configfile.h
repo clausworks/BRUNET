@@ -16,6 +16,8 @@
 
 #define CF_BUF_LEN 256
 
+// TODO: rename "pairs" to "triplets"
+
 typedef struct {
     struct in_addr clnt;
     struct in_addr serv;
