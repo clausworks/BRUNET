@@ -1,0 +1,36 @@
+PROXY PROGRAM TESTS
+-------------------
+
+General comment: 
+Manually verify operations succeed by reading output messages.
+
+Log level: LOG_DEBUG
+Config file: 1.yaml
+
+Given:  comms up; A up; B down
+Show:   reconnect repeat starts on A
+Repeat: swap A/B
+
+Given:  comms up; A up; wait for repeat; B up
+Show:   reconnect repeat starts on A, then connects to B; sync succeeds
+Repeat: swap A/B
+
+Given:  comms up; A up; B up quickly
+Show:   B connects to A before reconnect sequence starts
+Repeat: swap A/B
+
+
+CONNECTION ESTABLISHMENT/RECOVERY
+---------------------------------
+
+General comment:
+Test that user program connections can connect and disconnect properly.
+
+Log level: LOG_DEBUG
+User programs:
+- clnt1 (interactive): nc ADDR PORT
+- clnt2 (send file): nc -q 0 ADDR PORT < INFILE > OUTFILE
+- serv1 (interactive, single client): nc -l PORT
+- serv2 (echo, multi client): tcpserver ADDR PORT cat
+
+Given:  comms up; A & B up; clnt1 up
