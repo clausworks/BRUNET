@@ -1927,9 +1927,10 @@ static int receive_packet(ConnectivityState *state, struct pollfd fds[],
         if (read_len == 0) {
             log_printf(LOG_DEBUG, "Hit EOF (fd=%d)\n", fds[fd_i].fd);
             return handle_disconnect(state, fds, fd_i, e);
-            // TODO: close socket, or only shutdown half? This makes sense as
-            // long as the only way this connection hits EOF is if close() is
-            // called on the other end.
+            // NOTE: for a peer socket, EOF means that close() has been called
+            // on the other side and that the peer has shut down (^C) or that
+            // the connection was broken (but the peer is still up). In other
+            // words, we don't have to worry about a half-connection alive here.
         }
         // Error
         else if (read_len < 0) {
