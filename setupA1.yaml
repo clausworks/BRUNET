@@ -1,8 +1,0 @@
-# This device's IP address
-this_device: 10.0.0.1
-
-connections:
-  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 1234}
-  - {client: 10.0.0.3, server: 10.0.0.2, server_port: 1234}
-  - {client: 10.0.0.3, server: 10.0.0.4, server_port: 2345}
-  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2345}
