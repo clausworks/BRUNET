@@ -1073,8 +1073,12 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         i = fd_i - POLL_UCSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
-        lc->pend_pkt.lc_eod = true;
-        lc->pend_pkt.lc_closed_wr = true;
+        if (!lc->close_state.sent_eod) {
+            lc->pend_pkt.lc_eod = true;
+        }
+        if (!lc->close_state.sent_closed_wr) {
+            lc->pend_pkt.lc_closed_wr = true;
+        }
         fds[fd_i].events &= ~(POLLOUT | POLLIN);
         // Trigger packets
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
@@ -1086,8 +1090,12 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         i = fd_i - POLL_USSOCKS_OFF;
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
-        lc->pend_pkt.lc_eod = true;
-        lc->pend_pkt.lc_closed_wr = true;
+        if (!lc->close_state.sent_eod) {
+            lc->pend_pkt.lc_eod = true;
+        }
+        if (!lc->close_state.sent_closed_wr) {
+            lc->pend_pkt.lc_closed_wr = true;
+        }
         fds[fd_i].events &= ~(POLLOUT | POLLIN);
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
@@ -1151,7 +1159,9 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
         // Stage a packet to signal close to peer
-        lc->pend_pkt.lc_closed_wr = true;
+        if (!lc->close_state.sent_closed_wr) {
+            lc->pend_pkt.lc_closed_wr = true;
+        }
         fds[fd_i].events &= ~(POLLOUT);
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
@@ -1162,7 +1172,9 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
         // Stage a packet to signal close to peer
-        lc->pend_pkt.lc_closed_wr = true;
+        if (!lc->close_state.sent_closed_wr) {
+            lc->pend_pkt.lc_closed_wr = true;
+        }
         fds[fd_i].events &= ~(POLLOUT);
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
@@ -1200,7 +1212,9 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
         // Stage packet and trigger a send
-        lc->pend_pkt.lc_eod = true;
+        if (!lc->close_state.sent_eod) {
+            lc->pend_pkt.lc_eod = true;
+        }
         fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
@@ -1213,7 +1227,9 @@ static int handle_pollrdhup(ConnectivityState *state, struct pollfd fds[],
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
         // Stage packet and trigger a send
-        lc->pend_pkt.lc_eod = true;
+        if (!lc->close_state.sent_eod) {
+            lc->pend_pkt.lc_eod = true;
+        }
         fds[fd_i].events &= ~(POLLIN | POLLRDHUP);
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         break;
@@ -2112,7 +2128,9 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     if (read_len == 0) {
         // Stage a packet to be sent when cache is emptied
         log_printf(LOG_DEBUG, "Hit EOF. Closing read end (fd %d)\n", fds[fd_i].fd);
-        lc->pend_pkt.lc_eod = true;
+        if (!lc->close_state.sent_eod) {
+            lc->pend_pkt.lc_eod = true;
+        }
         fds[fd_i].events &= ~(POLLIN);
         fds[peer_id + POLL_PSOCKS_OFF].events |= POLLOUT;
         return 0;
