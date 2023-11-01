@@ -1,5 +1,6 @@
-PROXY PROGRAM TESTS
--------------------
+=========================
+PROXY PROGRAM CONNECTIONS
+=========================
 
 General comment: 
 Manually verify operations succeed by reading output messages.
@@ -7,21 +8,25 @@ Manually verify operations succeed by reading output messages.
 Log level: LOG_DEBUG
 Config file: 1.yaml
 
+[proxy1AB]
 Given:  comms up; A up; B down
 Show:   reconnect repeat starts on A
 Repeat: swap A/B
 
-Given:  comms up; A up; wait for repeat; B up
+[proxy2AB]
+Given:  comms up; A up; wait for reconn repeat; B up
 Show:   reconnect repeat starts on A, then connects to B; sync succeeds
 Repeat: swap A/B
 
+[proxy3AB]
 Given:  comms up; A up; B up quickly
 Show:   B connects to A before reconnect sequence starts
 Repeat: swap A/B
 
 
+=================================
 CONNECTION ESTABLISHMENT/RECOVERY
----------------------------------
+=================================
 
 General comment:
 Test that user program connections can connect and disconnect properly.
@@ -33,4 +38,136 @@ User programs:
 - serv1 (interactive, single client): nc -l PORT
 - serv2 (echo, multi client): tcpserver ADDR PORT cat
 
-Given:  comms up; A & B up; clnt1 up
+ESTABLISHMENT
+-------------
+Config: 1.yaml
+
+[estab1]
+Given:  comms up; A & B up; serv1 down; clnt1 up
+Show:   A sends LC_NEW, B recvs & registers LC; B sends LC_EOD, LC_CLOSED_WR;
+        A recvs & closes conn to clnt1 immediately
+
+[estab2]
+Given:  comms up; A & B up; serv1 up; clnt1 up; kill clnt1
+Show:   A sends LC_NEW, B recvs; A sends LC_EOD; B recvs, closes
+        conn to serv1; B sends LC_EOD & LC_CLOSED_WR; A recvs LC_EOD, closes
+        conn to clnt1; A recvs LC_CLOSED_WR, ignores
+
+[estab3A]
+Given:  comms up; A & B up; serv1 up; clnt1 up; A sends 1B; B sends 1B;
+        kill clnt1
+Show:   A sends LC_NEW, B recvs; A sends LC_DATA, B recvs & sends LC_ACK;
+        B sends LC_DATA, A recvs & sends LC_ACK; A sends LC_EOD; B recvs, closes
+        conn to serv1; B sends LC_EOD & LC_CLOSED_WR; A recvs LC_EOD & closes
+        conn to clnt1; A ignores LC_CLOSED_WR
+
+[estab3B]
+Given:  comms up; A & B up; serv1 up; clnt1 up; B sends 1B; A sends 1B;
+        kill serv1; A sends 1B
+Show:   A sends LC_NEW, B recvs; B sends LC_DATA, A recvs & sends LC_ACK;
+        A sends LC_DATA, B recvs & sends LC_ACK; B sends LC_EOD; A recvs, does
+        not close conn to clnt1; after 1B sent, B sends LC_EOD & LC_CLOSED_WR,
+        closes conn to serv1; A recvs, closes conn to clnt1
+
+[estab4A]
+Given:  comms up; A & B up; serv2 up; clnt2 up, short.txt
+Show:   A sends LC_NEW, LC_DATA, LC_EOD; B sends LC_ACK, LC_EOD, LC_CLOSED_WR;
+        diff output & input
+
+[estab4B]
+Given:  same as [estab4A], but lorem.txt
+Show:   same as [estab4a]; ensure only one LC_DATA ea dir
+
+[estab4C]
+Given:  same as [estab4A], but bible.txt
+Show:   same as [estab4A]; ensure many LC_DATA ea dir
+
+
+RECOVERY
+--------
+Config: 1.yaml
+
+[recov1A]
+Given:  comms down; A & B up; serv1 down; clnt1 up; wait for reconn repeat;
+        comms up
+Show:   A & B connect after comms up; packets exchanged, same as in [estab1]
+
+[recov1B]
+Given:  A & B up; comms down; serv1 down; clnt1 up; wait for reconn repeat;
+        comms up
+Show:   A & B connect; sync occurs after reconnect; packets same as in [estab1]
+
+[recov2A]
+Given:  comms up; A & B up; comms down; serv1 up; clnt1 up; kill clnt1; comms up
+Show:   A & B connect; packets same as in [estab2]
+
+[recov2B]
+Given:  comms down; A & B up; serv1 up; clnt1 up; kill clnt1; comms up
+Show:   A & B connect after comms up; packets same as in [estab2]
+
+[recov3A]
+Given:  comms up; A & B up; serv2 up; clnt2 up, bible.txt; comms down during
+        transfer; comms up
+Show:   A & B connect; data transfer starts, stops, resumes, completes; close
+        succeeds; diff output & input
+
+[recov3B]
+Given:  comms down; A & B up; serv2 up; clnt2 up, bible.txt; comms up after
+        transfer
+Show:   A & B connect; all data from clnt2 cached; clnt2 hits EOF but does not
+        close; after comms up, transmission resumes and all data is echoed back
+        to clnt2 successfully; diff output & input
+
+[recov3C]
+Given:  comms up; A & B up; serv2 up; clnt2 up, bible.txt; until complete,
+        run toggle_wlan0, up 1s, down 3s
+Show:   A & B connect; A & B disconnect/reconnect several times during data
+        transmission; data transmission complete successfully
+
+
+========================
+MULTIPLE CLIENTS/SERVERS
+========================
+
+MULTIPLE CLIENTS
+----------------
+Config: 1.yaml
+
+[mclnt1ABC]
+Given:  comms up; A & B up; serv2 up; seq_clnt.sh, short.txt, 2 clnts
+Show:   First LC closes before second starts; diff input/output successful
+Repeat: bible.txt, 5 clnts; 10 clnts, lorem_long.txt
+
+[mclnt2AB]
+Given:  comms up; A & B up; serv2 up; simul_clnt.sh, bible.txt, 2 clnts
+Show:   Second begins transmitting before first ends; diff input/ouput
+Repeat: 10 clnts
+
+MULTIPLE SERVERS
+----------------
+
+[mserv1A]
+Config: 2_p.yaml
+Given:  for each serv (nc), one clnt (nc); ea clnt sends 1B, ea. serv sends 1B;
+        kill ea. client
+Show:   data delivered to correct program; servers close as appropriate
+
+[mserv1B]
+Config: 2_p.yaml
+Given:  for ea serv (tcpserver), one clnt (nc w/ test[12]_5000000.in)
+Show:   diff infile/outfile matches for ea client
+
+Multiple devices, same ports
+Both devices as client & server
+
+=============
+THREE DEVICES
+=============
+
+Ensure data delivery [manual]
+Simul
+Combos
+
+==============
+GENERAL STRESS
+==============

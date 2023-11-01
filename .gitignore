@@ -1,3 +1,6 @@
+_*.yaml
+out
+*.in
 *.out
 *.cache
 .*.swp
