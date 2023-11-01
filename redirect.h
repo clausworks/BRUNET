@@ -57,7 +57,7 @@ typedef enum {
     PKTTYPE_LC_NEW = 1,
     PKTTYPE_LC_ACK = 2,
     PKTTYPE_LC_EOD = 3,
-    PKTTYPE_LC_CLOSED_WR = 4
+    PKTTYPE_LC_NO_WR = 4
 } PktType;
 
 
@@ -140,15 +140,15 @@ typedef struct {
         bool lc_ack;
         bool lc_data;
         bool lc_eod;
-        bool lc_closed_wr;
+        bool lc_no_wr;
     } pend_pkt; // TODO: SFN case - array, one pending struct per peer
     //PendingCmd pending_cmd[POLL_NUM_PSOCKS]; // same as type field of PktHdr
     //PendingData pending_data[POLL_NUM_PSOCKS];
     struct {
         bool sent_eod;
         bool received_eod;
-        bool sent_closed_wr;
-        bool received_closed_wr;
+        bool sent_no_wr;
+        bool received_no_wr;
         //bool fin_fwd;
         //bool fin_bkwd;
         bool fin_rd;

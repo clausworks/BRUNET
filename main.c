@@ -448,8 +448,8 @@ static void print_pkthdr(PktHdr *hdr) {
         case PKTTYPE_LC_EOD:
             raw_log_printf(LOG_DEBUG, "LC_EOD");
             break;
-        case PKTTYPE_LC_CLOSED_WR:
-            raw_log_printf(LOG_DEBUG, "LC_CLOSED_WR");
+        case PKTTYPE_LC_NO_WR:
+            raw_log_printf(LOG_DEBUG, "LC_NO_WR");
             break;
         case PKTTYPE_LC_ACK:
             raw_log_printf(LOG_DEBUG, "LC_ACK");
@@ -523,8 +523,8 @@ static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) 
     }
 
     assert(lc->close_state.fin_wr && lc->close_state.fin_rd);
-    assert(lc->close_state.received_closed_wr || lc->close_state.sent_eod);
-    assert(lc->close_state.sent_closed_wr || lc->close_state.received_eod);
+    assert(lc->close_state.received_no_wr || lc->close_state.sent_eod);
+    assert(lc->close_state.sent_no_wr || lc->close_state.received_eod);
 
     if (cache_close(&lc->cache, e) < 0) {
         err_msg_prepend(e, "lc_destroy failed: ");
@@ -1076,8 +1076,8 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         if (!lc->close_state.sent_eod) {
             lc->pend_pkt.lc_eod = true;
         }
-        if (!lc->close_state.sent_closed_wr) {
-            lc->pend_pkt.lc_closed_wr = true;
+        if (!lc->close_state.sent_no_wr) {
+            lc->pend_pkt.lc_no_wr = true;
         }
         fds[fd_i].events &= ~(POLLOUT | POLLIN);
         // Trigger packets
@@ -1093,8 +1093,8 @@ static int handle_disconnect(ConnectivityState *state, struct pollfd fds[],
         if (!lc->close_state.sent_eod) {
             lc->pend_pkt.lc_eod = true;
         }
-        if (!lc->close_state.sent_closed_wr) {
-            lc->pend_pkt.lc_closed_wr = true;
+        if (!lc->close_state.sent_no_wr) {
+            lc->pend_pkt.lc_no_wr = true;
         }
         fds[fd_i].events &= ~(POLLOUT | POLLIN);
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
@@ -1159,8 +1159,8 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         lc = dict_get(state->log_conns, state->user_clnt_conns[i].lc_id, e);
         assert(lc != NULL);
         // Stage a packet to signal close to peer
-        if (!lc->close_state.sent_closed_wr) {
-            lc->pend_pkt.lc_closed_wr = true;
+        if (!lc->close_state.sent_no_wr) {
+            lc->pend_pkt.lc_no_wr = true;
         }
         fds[fd_i].events &= ~(POLLOUT);
         fds[lc->serv_id + POLL_PSOCKS_OFF].events |= POLLOUT;
@@ -1172,8 +1172,8 @@ static int handle_pollhup(ConnectivityState *state, struct pollfd fds[],
         lc = dict_get(state->log_conns, state->user_serv_conns[i].lc_id, e);
         assert(lc != NULL);
         // Stage a packet to signal close to peer
-        if (!lc->close_state.sent_closed_wr) {
-            lc->pend_pkt.lc_closed_wr = true;
+        if (!lc->close_state.sent_no_wr) {
+            lc->pend_pkt.lc_no_wr = true;
         }
         fds[fd_i].events &= ~(POLLOUT);
         fds[lc->clnt_id + POLL_PSOCKS_OFF].events |= POLLOUT;
@@ -1773,7 +1773,7 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     return 0;
 }
 
-static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
+static int process_lc_no_wr(ConnectivityState *state, struct pollfd fds[],
     int fd_i, ErrorStatus *e) {
 
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
@@ -1782,7 +1782,7 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
     if (lc == NULL) {
-        log_printf(LOG_DEBUG, "Note: ignored LC_CLOSED_WR (LC doesn't exist)\n");
+        log_printf(LOG_DEBUG, "Note: ignored LC_NO_WR (LC doesn't exist)\n");
         return 0;
     }
 
@@ -1799,8 +1799,8 @@ static int process_lc_closed_wr(ConnectivityState *state, struct pollfd fds[],
         fds[lc->usock_idx + POLL_UCSOCKS_OFF].events &= ~(POLLIN);
     }
 
-    lc->close_state.received_closed_wr = true;
-    log_printf(LOG_DEBUG, "received_closed_wr\n");
+    lc->close_state.received_no_wr = true;
+    log_printf(LOG_DEBUG, "received_no_wr\n");
     // Close half of LC
     lc->close_state.fin_rd = true;
     log_printf(LOG_DEBUG, "fin_rd\n");
@@ -1891,8 +1891,8 @@ static int process_packet(ConnectivityState *state, struct pollfd fds[],
         return process_lc_ack(state, fds, fd_i, e);
     case PKTTYPE_LC_EOD:
         return process_lc_eod(state, fds, fd_i, e);
-    case PKTTYPE_LC_CLOSED_WR:
-        return process_lc_closed_wr(state, fds, fd_i, e);
+    case PKTTYPE_LC_NO_WR:
+        return process_lc_no_wr(state, fds, fd_i, e);
     default:
         log_printf(LOG_DEBUG, "PKTTYPE unknown\n");
         assert(0); // should never get here
@@ -2348,7 +2348,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             }
 
             // PACKET: DATA PACKET
-            if (lc->pend_pkt.lc_data && !lc->close_state.received_closed_wr) {
+            if (lc->pend_pkt.lc_data && !lc->close_state.received_no_wr) {
                 char buf[PKT_MAX_PAYLOAD_LEN];
                 long long unsigned paylen;
                 long long unsigned obuf_empty;
@@ -2498,13 +2498,13 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 }
             }
 
-            // PACKET: LC_CLOSED_WR
-            if (lc->pend_pkt.lc_closed_wr) {
+            // PACKET: LC_NO_WR
+            if (lc->pend_pkt.lc_no_wr) {
                 pktlen = sizeof(PktHdr);
 
                 if (pktlen <= obuf_get_empty(&peer->obuf)) {
                     PktHdr hdr = {
-                        .type = PKTTYPE_LC_CLOSED_WR,
+                        .type = PKTTYPE_LC_NO_WR,
                         .lc_id = lc->id,
                         // set .dir later
                         .off = 0,
@@ -2527,9 +2527,9 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     print_pkthdr(&hdr);
                     copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
 
-                    lc->pend_pkt.lc_closed_wr = false;
-                    lc->close_state.sent_closed_wr = true;
-                    log_printf(LOG_DEBUG, "sent_closed_wr\n");
+                    lc->pend_pkt.lc_no_wr = false;
+                    lc->close_state.sent_no_wr = true;
+                    log_printf(LOG_DEBUG, "sent_no_wr\n");
                     lc->close_state.fin_wr = true;
                     log_printf(LOG_DEBUG, "fin_wr\n");
                     //shutdown(sock, SHUT_WR);
