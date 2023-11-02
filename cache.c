@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <sys/mman.h>
 #include <stdbool.h>
+#include <limits.h>
 
 #include "redirect.h"
 #include "error.h"
@@ -96,11 +97,50 @@ static void _move_act_hd_to_free(CacheFileHeader *f) {
  * Returns: -1 on system error, -2 if max file size reached. ErrorStatus will be
  * updated accordingly.
  */
-static int _cachefile_expand(CacheFileHeader *f, ErrorStatus *e) {
-    // TODO: stub
-    err_msg(e, "reached maximum cache file size");
-    exit(EXIT_FAILURE);
-    return -2;
+static int _cachefile_expand(OpenCacheFile *file, ErrorStatus *e) {
+    int max_file_pages = ((1<<30) / _page_bytes);
+    long long new_len;
+    CacheFileHeader *new_base;
+    int num_new_blks = file->mmap_len / _page_bytes; // size will be doubled
+
+    // Max file size needs to be less than INT_MAX. This assumes off_t is the
+    // same as int32_t, and size_t is the same as uint32_t. Otherwise, we could
+    // deal with bigger files. But we'd still run into and issue where mmap
+    // would just become inefficient on large files, and we wouldn't really want
+    // to allocate the entire file all at once. TODO [future work]: make this
+    // more efficient.
+    assert(max_file_pages * _page_bytes <= INT_MAX);
+
+    new_len = file->mmap_len * 2;
+    if (new_len / _page_bytes > max_file_pages) {
+        log_printf(LOG_INFO, "reached max file size");
+        exit(EXIT_FAILURE);
+        return -2;
+    }
+
+    // Resize underlying file
+    if (ftruncate(file->fd, new_len) < 0) {
+        err_msg_errno(e, "ftruncate: %s", file->fname);
+        return -1;
+    }
+
+    // Remap memory -- expands virtual memory mapping. Does not have to copy
+    // values.
+    new_base = mremap(file->mmap_base, file->mmap_len, new_len, MREMAP_MAYMOVE);
+    if (new_base == MAP_FAILED) {
+        err_msg_errno(e, "mremap");
+        return -1;
+    }
+
+    file->mmap_base = new_base;
+    file->mmap_len = new_len;
+
+    // Add new blocks to free list
+    for (int i = 0; i < num_new_blks; ++i) {
+        _create_free_blk(file->mmap_base, i*_blk_bytes);
+    }
+
+    return 0;
 }
 
 /* Remove a block from the free list and append it to the active list. This
@@ -109,7 +149,8 @@ static int _cachefile_expand(CacheFileHeader *f, ErrorStatus *e) {
  *
  * Returns: 0 on success, -1 on error (could not expand cache file)
  */
-static int _extend_active_list(CacheFileHeader *f, ErrorStatus *e) {
+static int _extend_active_list(OpenCacheFile *file, ErrorStatus *e) {
+    CacheFileHeader *f = file->mmap_base;
     CacheFileBlock *blk_act_tl = _off_to_blk(f, f->act_tl);
     //CacheFileBlock *blk_free_hd;
     long long new_free_hd_off;
@@ -118,7 +159,7 @@ static int _extend_active_list(CacheFileHeader *f, ErrorStatus *e) {
 
     // Out of free blocks. Extend file to make more.
     if (f->free_hd == -1) {
-        status = _cachefile_expand(f, e);
+        status = _cachefile_expand(file, e);
         if (status < 0) {
             return -1;
         }
@@ -176,7 +217,7 @@ static void _cachefile_init(CacheFileHeader *f,/* struct in_addr peers[],*/ int 
     b->next = -1;
 
     // Free blocks (list will be in reverse order). This should have no effect
-    // on performance, but may be slightly counterintuitive.
+    // on performance (hopefully?), but may be slightly counterintuitive.
     f->free_hd = -1;
     for (int i = 2; i < num_blks; ++i) {
         _create_free_blk(f, i*_blk_bytes);
@@ -220,9 +261,10 @@ static void _cachefile_init(CacheFileHeader *f,/* struct in_addr peers[],*/ int 
  *
  * Returns 0 on success, -1 on failiure.
  */
-int cachefile_write(CacheFileHeader *f, char *buf, int buflen,
+int cachefile_write(OpenCacheFile *file, char *buf, int buflen,
     ErrorStatus *e) {
 
+    CacheFileHeader *f = file->mmap_base;
     char *write_head; // byte pointer for memcpy
     long long empty; // empty bytes in current block
     long long nbytes; // number of bytes to copy
@@ -251,7 +293,7 @@ int cachefile_write(CacheFileHeader *f, char *buf, int buflen,
         // block. Create a new block.
         else {
             nbytes = empty;
-            status = _extend_active_list(f, e); // expands file if necessary
+            status = _extend_active_list(file, e); // expands file if necessary
             if (status < 0) {
                 return -1;
             }
@@ -285,9 +327,10 @@ int cachefile_write(CacheFileHeader *f, char *buf, int buflen,
  *
  * Returns: the number of bytes read, or -1 on error.
  */
-int cachefile_read(CacheFileHeader *f, int peer_id, char *buf,
+int cachefile_read(OpenCacheFile *file, int peer_id, char *buf,
     int buflen, ErrorStatus *e) {
 
+    CacheFileHeader *f = file->mmap_base;
     char *read_head;
     long long buf_avail = buflen; // bytes available in buffer
     long long blk_avail;
@@ -353,7 +396,8 @@ int cachefile_read(CacheFileHeader *f, int peer_id, char *buf,
     return total;
 }
 
-void cachefile_ack(CacheFileHeader *f, long long n_acked) {
+void cachefile_ack(OpenCacheFile *file, long long n_acked) {
+    CacheFileHeader *f = file->mmap_base;
     long long remaining = n_acked; // bytes available in buffer
     long long blk_avail;
     long long blk_off, blk_off_new;
@@ -445,26 +489,31 @@ void cachefile_ack(CacheFileHeader *f, long long n_acked) {
 /* Return the number of bytes that can be read for the given peer. Logically,
  * this is equivalent to (write head) - (read head).
  */
-unsigned long long cachefile_get_readlen(CacheFileHeader *f, int peer_id) {
+unsigned long long cachefile_get_readlen(OpenCacheFile *file, int peer_id) {
+    CacheFileHeader *f = file->mmap_base;
     return f->logical_write - f->logical_read[peer_id];
 }
 
 /* Return the number of unacked bytes, including bytes that have not been read
  * from the file (i.e. bytes cached but not sent to a peer).
  */
-unsigned long long cachefile_get_unacked(CacheFileHeader *f) {
+unsigned long long cachefile_get_unacked(OpenCacheFile *file) {
+    CacheFileHeader *f = file->mmap_base;
     return f->logical_write - f->logical_ack;
 }
 
-unsigned long long cachefile_get_read(CacheFileHeader *f, int peer_id) {
+unsigned long long cachefile_get_read(OpenCacheFile *file, int peer_id) {
+    CacheFileHeader *f = file->mmap_base;
     return f->logical_read[peer_id];
 }
 
-unsigned long long cachefile_get_ack(CacheFileHeader *f) {
+unsigned long long cachefile_get_ack(OpenCacheFile *file) {
+    CacheFileHeader *f = file->mmap_base;
     return f->logical_ack;
 }
 
-unsigned long long cachefile_get_write(CacheFileHeader *f) {
+unsigned long long cachefile_get_write(OpenCacheFile *file) {
+    CacheFileHeader *f = file->mmap_base;
     return f->logical_write;
 }
 
@@ -505,7 +554,7 @@ static int _gen_fname(unsigned lc_id, char *fname, char *suffix, ErrorStatus *e)
 }
 
 // Returns fd, -1 on error
-static int _create_file(char *fname, ErrorStatus *e) {
+static int _create_file(char *fname, off_t file_len, ErrorStatus *e) {
     // TODO: check these options
     int fd = open(fname, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
     if (fd < 0) {
@@ -514,7 +563,7 @@ static int _create_file(char *fname, ErrorStatus *e) {
         return -1;
     }
 
-    if (ftruncate(fd, CACHE_DEFAULT_PAGES * _page_bytes) < 0) {
+    if (ftruncate(fd, file_len) < 0) {
         err_msg_errno(e, "ftruncate: %s", fname);
         return -1;
     }
@@ -535,22 +584,22 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
 
     memset(cache, 0, sizeof(Cache));
 
+    mmap_len = CACHE_DEFAULT_PAGES * _page_bytes;
+
     // FORWARD DIRECTION
     if (_gen_fname(lc_id, cache->fwd.fname, "fwd", e) < 0) {
         err_msg_prepend(e, "fname fwd: ");
         return -1;
     }
-    cache->fwd.fd = _create_file(cache->fwd.fname, e);
+    cache->fwd.fd = _create_file(cache->fwd.fname, mmap_len, e);
     if (cache->fwd.fd < 0) { return -1; }
     // BACKWARD DIRECTION
     if (_gen_fname(lc_id, cache->bkwd.fname, "bkwd", e) < 0) {
         err_msg_prepend(e, "fname bkwd: ");
         return -1;
     }
-    cache->bkwd.fd = _create_file(cache->bkwd.fname, e);
+    cache->bkwd.fd = _create_file(cache->bkwd.fname, mmap_len, e);
     if (cache->bkwd.fd < 0) { return -1; }
-
-    mmap_len = CACHE_DEFAULT_PAGES * _page_bytes;
 
     f = mmap(0, mmap_len,
         PROT_READ | PROT_WRITE, MAP_SHARED, cache->fwd.fd, 0);
@@ -559,7 +608,7 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
         return -1;
     }
     _cachefile_init(f, n_peers);//, peers, n_peers);
-    cache->fwd.hdr_base = f;
+    cache->fwd.mmap_base = f;
     cache->fwd.mmap_len = mmap_len;
 
     f = mmap(0, mmap_len,
@@ -569,7 +618,7 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
         return -1;
     }
     _cachefile_init(f, n_peers);//, peers, n_peers);
-    cache->bkwd.hdr_base = f;
+    cache->bkwd.mmap_base = f;
     cache->bkwd.mmap_len = mmap_len;
 
     return 0;
@@ -577,8 +626,8 @@ int cache_init(Cache *cache, unsigned lc_id, int n_peers, ErrorStatus *e) {
 
 int cache_close(Cache *cache, ErrorStatus *e) {
     int status;
-    status = munmap(cache->fwd.hdr_base, cache->fwd.mmap_len);
-    status = munmap(cache->bkwd.hdr_base, cache->bkwd.mmap_len);
+    status = munmap(cache->fwd.mmap_base, cache->fwd.mmap_len);
+    status = munmap(cache->bkwd.mmap_base, cache->bkwd.mmap_len);
     
     // Forward
     if (status < 0) {
@@ -716,8 +765,8 @@ static int __test_caching_1() {
         err_show(&e);
         return -1;
     }
-    __print_cfhdr(cache.fwd.hdr_base);
-    __print_cfhdr(cache.bkwd.hdr_base);
+    __print_cfhdr(cache.fwd.mmap_base);
+    __print_cfhdr(cache.bkwd.mmap_base);
 
     cache_close(&cache, &e);
     return 0;
@@ -745,7 +794,7 @@ static int __test_caching_2() {
         return -1;
     }
 
-    f = cache.fwd.hdr_base;
+    f = cache.fwd.mmap_base;
 
     strcpy(wbuf, "Hello world");
     status = cachefile_write(f, wbuf, strlen(wbuf), &e);
@@ -791,7 +840,7 @@ static int __test_caching_3() {
         return -1;
     }
 
-    f = cache.fwd.hdr_base;
+    f = cache.fwd.mmap_base;
 
     __print_ll("active", f, f->ack / _blk_bytes * _blk_bytes);
     __print_ll("free", f, f->free_hd);
@@ -858,7 +907,7 @@ static int __test_caching_4(int nbytes) {
         return -1;
     }
 
-    f = cache.fwd.hdr_base;
+    f = cache.fwd.mmap_base;
 
     // setup
     memset(wbuf, 'a', nbytes);
@@ -914,7 +963,7 @@ static int __test_caching_5(int nbytes) {
         return -1;
     }
 
-    f = cache.fwd.hdr_base;
+    f = cache.fwd.mmap_base;
 
     // setup
     memset(wbuf, 'a', nbytes);

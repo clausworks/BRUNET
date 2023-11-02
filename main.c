@@ -1687,7 +1687,7 @@ static int process_lc_data(ConnectivityState *state, struct pollfd fds[],
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
     char *payload = state->peers[peer_id].ibuf.buf + sizeof(PktHdr);
-    CacheFileHeader *f;
+    OpenCacheFile *f;
 
     // TODO [future work]: The assertion below may fail if a proxy program is
     // killed and restarted while the current one remains open. This is because
@@ -1709,12 +1709,12 @@ static int process_lc_data(ConnectivityState *state, struct pollfd fds[],
     switch (hdr->dir) {
     case PKTDIR_FWD:
         assert(lc->clnt_id == peer_id); // non-SFN
-        f = lc->cache.fwd.hdr_base;
+        f = &lc->cache.fwd;
         fds[lc->usock_idx + POLL_USSOCKS_OFF].events |= POLLOUT;
         break;
     case PKTDIR_BKWD:
         assert(lc->serv_id == peer_id); // non-SFN
-        f = lc->cache.bkwd.hdr_base;
+        f = &lc->cache.bkwd;
         fds[lc->usock_idx + POLL_UCSOCKS_OFF].events |= POLLOUT;
         break;
     default:
@@ -1735,7 +1735,7 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
 
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
-    CacheFileHeader *f;
+    OpenCacheFile *f;
     unsigned long long last_acked;
 
     LogConn *lc = (LogConn *)dict_get(state->log_conns, hdr->lc_id, e);
@@ -1747,11 +1747,11 @@ static int process_lc_ack(ConnectivityState *state, struct pollfd fds[],
     // An ACK packet moving backwards is for the forwards stream
     if (hdr->dir == PKTDIR_BKWD) {
         assert(lc->serv_id == peer_id); // non-SFN
-        f = lc->cache.fwd.hdr_base;
+        f = &lc->cache.fwd;
     }
     else {
         assert(lc->clnt_id == peer_id); // non-SFN
-        f = lc->cache.bkwd.hdr_base;
+        f = &lc->cache.bkwd;
     }
 
     last_acked = cachefile_get_ack(f);
@@ -1817,7 +1817,7 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
 
     unsigned peer_id = fd_i - POLL_PSOCKS_OFF; // socket with POLLIN (other device)
     PktHdr *hdr = (PktHdr *)state->peers[peer_id].ibuf.buf;
-    CacheFileHeader *f;
+    OpenCacheFile *f;
     int sock;
     FDType fdtype;
 
@@ -1830,13 +1830,13 @@ static int process_lc_eod(ConnectivityState *state, struct pollfd fds[],
     // If the packet received is BKWD, then this node is the client
     if (hdr->dir == PKTDIR_BKWD) {
         fdtype = FDTYPE_USERCLNT;
-        f = lc->cache.bkwd.hdr_base; // EOD is for bkwd
+        f = &lc->cache.bkwd; // EOD is for bkwd
         assert(lc->serv_id == peer_id); // non-SFN
         sock = state->user_clnt_conns[lc->usock_idx].sock;
     }
     else {
         fdtype = FDTYPE_USERSERV;
-        f = lc->cache.fwd.hdr_base; // EOD is for fwd
+        f = &lc->cache.fwd; // EOD is for fwd
         assert(lc->clnt_id == peer_id); // non-SFN
         sock = state->user_serv_conns[lc->usock_idx].sock;
     }
@@ -2087,7 +2087,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
     char buf[PKT_MAX_PAYLOAD_LEN];
     ssize_t read_len;
     LogConn *lc;
-    CacheFileHeader *cache_hdr;
+    OpenCacheFile *f;
     unsigned lc_id;
     unsigned user_id;
     unsigned peer_id;
@@ -2102,7 +2102,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
                 err_msg_prepend(e, "FDTYPE_USSOCK POLLIN: ");
                 return -1;
             }
-            cache_hdr = lc->cache.bkwd.hdr_base;
+            f = &lc->cache.bkwd;
             peer_id = lc->clnt_id;
             log_printf(LOG_DEBUG, "Writing to cache file: bkwd\n");
             break;
@@ -2114,7 +2114,7 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
                 err_msg_prepend(e, "FDTYPE_UCSOCK POLLIN: ");
                 return -1;
             }
-            cache_hdr = lc->cache.fwd.hdr_base;
+            f = &lc->cache.fwd;
             peer_id = lc->serv_id;
             log_printf(LOG_DEBUG, "Writing to cache file: fwd\n");
             break;
@@ -2153,10 +2153,10 @@ static int handle_pollin_user(ConnectivityState *state, struct pollfd fds[],
         log_printf(LOG_DEBUG, "%d bytes read\n", read_len);
 
         // Write to cache file
-        if (cachefile_write(cache_hdr, buf, read_len, e) < 0) {
+        if (cachefile_write(f, buf, read_len, e) < 0) {
             return -1;
         }
-        log_printf(LOG_DEBUG, "cachefile_get_write [src]: %llu\n", cachefile_get_write(cache_hdr));
+        log_printf(LOG_DEBUG, "cachefile_get_write [src]: %llu\n", cachefile_get_write(f));
 
         // Trigger pollout on destination socket (non-SFN)
         lc->pend_pkt.lc_data = true;
@@ -2306,7 +2306,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 pktlen = sizeof(PktHdr);
 
                 if (obuf_get_empty(&peer->obuf) >= pktlen) {
-                    CacheFileHeader *f;
+                    OpenCacheFile *f;
                     PktHdr hdr = {
                         .type = PKTTYPE_LC_ACK,
                         .lc_id = lc->id,
@@ -2324,13 +2324,13 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         // Packet goes forward (to server)
                         hdr.dir = PKTDIR_FWD;
                         // ACK bytes from bkwd stream
-                        f = lc->cache.bkwd.hdr_base;
+                        f = &lc->cache.bkwd;
                     }
                     else if (lc->clnt_id == peer_id) {
                         // Packet goes backward (to client)
                         hdr.dir = PKTDIR_BKWD;
                         // ACK bytes from fwd stream
-                        f = lc->cache.fwd.hdr_base;
+                        f = &lc->cache.fwd;
                     }
 
                     hdr.off = cachefile_get_ack(f);
@@ -2352,7 +2352,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 char buf[PKT_MAX_PAYLOAD_LEN];
                 long long unsigned paylen;
                 long long unsigned obuf_empty;
-                CacheFileHeader *f;
+                OpenCacheFile *f;
 
                 assert(!lc->pend_pkt.lc_new);
                 
@@ -2371,11 +2371,11 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     // Determine direction (peer_id is destination)
                     if (lc->serv_id == peer_id) {
                         hdr.dir = PKTDIR_FWD;
-                        f = lc->cache.fwd.hdr_base;
+                        f = &lc->cache.fwd;
                     }
                     else if (lc->clnt_id == peer_id) {
                         hdr.dir = PKTDIR_BKWD;
-                        f = lc->cache.bkwd.hdr_base;
+                        f = &lc->cache.bkwd;
                     }
 
                     // Get avail. num bytes in cache
@@ -2438,14 +2438,14 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
             // acked.
             // TODO: ensure POLLOUT will be triggered for LC_EOD when needed.
             if (lc->pend_pkt.lc_eod && (!lc->pend_pkt.lc_data)) {
-                CacheFileHeader *f;
+                OpenCacheFile *f;
 
                 // Check to see if any data needs to be acked
                 if (lc->serv_id == peer_id) {
-                    f = lc->cache.fwd.hdr_base;
+                    f = &lc->cache.fwd;
                 }
                 else if (lc->clnt_id == peer_id) {
-                    f = lc->cache.bkwd.hdr_base;
+                    f = &lc->cache.bkwd;
                 }
 
                 // Only send if all data has been sent
@@ -2606,7 +2606,7 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     unsigned lc_id;
     LogConn *lc;
     bool unread_data = false;
-    CacheFileHeader *cache;
+    OpenCacheFile *f;
 
     // Set values based on serv/clnt
     if (fdtype == FDTYPE_USERSERV) {
@@ -2645,15 +2645,15 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     // Set variables
     if (fdtype == FDTYPE_USERSERV) {
         this_id = lc->serv_id;
-        cache = lc->cache.fwd.hdr_base;
+        f = &lc->cache.fwd;
     }
     else {
         this_id = lc->clnt_id;
-        cache = lc->cache.bkwd.hdr_base;
+        f = &lc->cache.bkwd;
     }
 
     // Find how much we can write
-    nbytes = cachefile_get_readlen(cache, this_id);
+    nbytes = cachefile_get_readlen(f, this_id);
     log_printf(LOG_DEBUG, "cachefile_get_readlen: %llu\n", nbytes);
     if (PKT_MAX_PAYLOAD_LEN < nbytes) {
         nbytes = PKT_MAX_PAYLOAD_LEN;
@@ -2668,9 +2668,9 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
     // Write, if we have data (no data could mean LC_EOD packet)
     if (nbytes > 0) {
         // Read that number of bytes
-        assert(nbytes == cachefile_read(cache, this_id, buf, nbytes, e));
-        log_printf(LOG_DEBUG, "cachefile_get_read [dst]: %llu\n", cachefile_get_read(cache,
-            this_id));
+        assert(nbytes == cachefile_read(f, this_id, buf, nbytes, e));
+        log_printf(LOG_DEBUG, "cachefile_get_read [dst]: %llu\n",
+            cachefile_get_read(f, this_id));
 
         // Schedule ack packet
         if (fdtype == FDTYPE_USERSERV) {
@@ -2697,8 +2697,9 @@ static int write_to_user_sock(ConnectivityState *state, struct pollfd fds[],
         // TCP guarantees delivery, the only way data will not eventually be
         // delivered is if the user program itself closes the connection before it
         // has a chance to receive all the data. This is not our problem.
-        cachefile_ack(cache, nbytes);
-        log_printf(LOG_DEBUG, "cachefile_get_ack [dst]: %llu\n", cachefile_get_ack(cache));
+        cachefile_ack(f, nbytes);
+        log_printf(LOG_DEBUG, "cachefile_get_ack [dst]: %llu\n",
+            cachefile_get_ack(f));
         // TODO [future work]: accumulate ACKs to reduce their number, possibly
         // triggering them with timerfd/poll, like the reconnection system.
 

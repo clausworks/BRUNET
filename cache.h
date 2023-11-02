@@ -5,7 +5,6 @@
 #include "error.h"
 
 #define CACHE_FNAME_SIZE 256
-#define CACHE_MAX_PAGES 4096
 #define CACHE_DEFAULT_PAGES 1024
 #define CACHE_BLK_PER_PAGE 4
 
@@ -34,7 +33,7 @@ typedef struct {
 
 typedef struct {
     int fd;
-    CacheFileHeader *hdr_base;
+    CacheFileHeader *mmap_base;
     long long mmap_len;
     char fname[CACHE_FNAME_SIZE];
 } OpenCacheFile;
@@ -47,14 +46,14 @@ typedef struct {
 void cache_global_init(void);
 int cache_init(Cache *, unsigned, int, ErrorStatus *);
 int cache_close(Cache *, ErrorStatus *e);
-int cachefile_read(CacheFileHeader *f, int, char *, int, ErrorStatus *);
-int cachefile_write(CacheFileHeader *f, char *, int, ErrorStatus *);
-void cachefile_ack(CacheFileHeader *f, long long);
-unsigned long long cachefile_get_readlen(CacheFileHeader *f, int);
-unsigned long long cachefile_get_read(CacheFileHeader *f, int);
-unsigned long long cachefile_get_ack(CacheFileHeader *f);
-unsigned long long cachefile_get_unacked(CacheFileHeader *f);
-unsigned long long cachefile_get_write(CacheFileHeader *f);
+int cachefile_read(OpenCacheFile *, int, char *, int, ErrorStatus *);
+int cachefile_write(OpenCacheFile *, char *, int, ErrorStatus *);
+void cachefile_ack(OpenCacheFile *, long long);
+unsigned long long cachefile_get_readlen(OpenCacheFile *, int);
+unsigned long long cachefile_get_read(OpenCacheFile *, int);
+unsigned long long cachefile_get_ack(OpenCacheFile *);
+unsigned long long cachefile_get_unacked(OpenCacheFile *);
+unsigned long long cachefile_get_write(OpenCacheFile *);
 
 #ifdef __TEST
 void __test_caching(void);
