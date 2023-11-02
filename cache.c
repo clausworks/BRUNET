@@ -99,6 +99,7 @@ static void _move_act_hd_to_free(CacheFileHeader *f) {
 static int _cachefile_expand(CacheFileHeader *f, ErrorStatus *e) {
     // TODO: stub
     err_msg(e, "reached maximum cache file size");
+    exit(EXIT_FAILURE);
     return -2;
 }
 
