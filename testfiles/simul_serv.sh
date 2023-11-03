@@ -8,8 +8,7 @@ num_servers=$3
 
 sigint_handler() {
     echo Killing servers
-    #pkill -P $$
-    #echo $?
+    pkill -P $$
     exit 0
 }
 
