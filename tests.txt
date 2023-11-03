@@ -133,7 +133,7 @@ MULTIPLE CLIENTS
 ----------------
 Config: 1.yaml
 
-[mclnt1ABC]
+[mclnt1ABC] 
 Given:  comms up; A & B up; serv2 up; seq_clnt.sh, short.txt, 2 clnts
 Show:   First LC closes before second starts; diff input/output successful
 Repeat: bible.txt, 5 clnts; 10 clnts, lorem_long.txt
@@ -146,28 +146,61 @@ Repeat: 10 clnts
 MULTIPLE SERVERS
 ----------------
 
-[mserv1A]
-Config: 2_p.yaml
-Given:  for each serv (nc), one clnt (nc); ea clnt sends 1B, ea. serv sends 1B;
-        kill ea. client
-Show:   data delivered to correct program; servers close as appropriate
+[mserv1ABCD]
+Config: 2_p.yaml (two servers on same host; different ports)
+Given:  serv1/clnt1 port 1234, serv2/clnt2 port 2345; use nc; serv1/2 up;
+        connect clnt1/serv1; send text clnt1->serv1, & reverse; kill clnt1;
+        repeat w/ serv2/clnt2
+Show:   data delivered to correct program; serv/clnt program closes as
+        appropriate
+Repeat: same but clnt2/serv2 first; clnt1/serv1 first, but kill serv1 first;
+        clnt2/serv2 first, but kill serv2 first
+Note:   keep proxy programs open; implicitly test sequential LCs
 
-[mserv1B]
-Config: 2_p.yaml
-Given:  for ea serv (tcpserver), one clnt (nc w/ test[12]_5000000.in)
-Show:   diff infile/outfile matches for ea client
+[mserv1E]
+Config: 2_p.yaml (two servers on same host; different ports)
+Given:  serv1/clnt1 port 1234, serv2/clnt2 port 2345; use nc; serv1/2 up;
+        connect clnt1/serv1; connect clnt2/serv2; send text clnt1->serv1,
+        & reverse; send text clnt2->serv2, & reverse; kill serv1; kill serv2;
+Show:   data delivered to correct program; clnts close appropriately
 
-Multiple devices, same ports
-Both devices as client & server
+[mserv1F]
+Config: 2_p.yaml (two servers on same host; different ports)
+Given:  5 simultaneous clnts per serv (serv1: 1234, serv2: 2345); use
+        simul_clnt.sh (test[1-5]_5000000.in) for clnts, tcpserver for servs
+Show:   each clnt recvs correct data, diffs match
 
-=============
+[mserv2]
+Config: 2_cs.yaml (A as clnt & serv; B as serv & clnt)
+Given:  5 simultaneous clnts per serv; user simul_clnt.sh (test[1-5]_5000000.in)
+        for clnts, tcpserver for servs
+Show:   each clnt recvs correct data, diffs match
+
 THREE DEVICES
-=============
+-------------
 
-Ensure data delivery [manual]
-Simul
-Combos
+Given:  For each of the following config files, use simul_clnt.sh
+        (test[1-5]_5000000.in) to generate 5 clnts per LC.
+Show:   diffs all match
 
-==============
-GENERAL STRESS
-==============
+[three1]
+Config: 2_c.yaml (B as serv; A and C as clnts)
+
+[three2]
+Config: 2_cp.yaml (B as serv, 2 ports; A and C as clnts)
+
+[three3]
+Config: 2_s.yaml (B and C as servs, same port; A as clnt)
+
+[three4]
+Config: 2_sp.yaml (B and C as servs, diff ports; A as clnt)
+
+[three5]
+Config: 3_circ.yaml (A-B clnt-serv; B-C as clnt-serv; C-A as clnt-serv)
+
+
+======================
+COMPLEX CONFIGURATIONS
+======================
+Note: each test should be performed while toggle_wlan0.sh is running (2s down,
+2s up). 
