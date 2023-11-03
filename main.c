@@ -2055,7 +2055,7 @@ static int handle_pollin_peer(ConnectivityState *state, struct pollfd fds[],
             // See comments for receive_peer_sync.
             fds[fd_i].events = POLLIN | POLLOUT | POLLRDHUP;
             receive_peer_sync(&state->peers[i], e);
-            log_printf(LOG_INFO, "Connection live with peer %s",
+            log_printf(LOG_INFO, "Connection live with peer %s\n",
                 inet_ntoa(state->peers[i].addr));
             return 0;
         }
