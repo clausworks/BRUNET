@@ -1,0 +1,17 @@
+connections:
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2000}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2001}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2002}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2003}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2004}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2005}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2006}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2007}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2008}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2009}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2010}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2011}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2012}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2013}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2014}
+  - {client: 10.0.0.1, server: 10.0.0.2, server_port: 2015}
