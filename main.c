@@ -2293,7 +2293,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 }
                 else {
                     out_of_space = true;
-                    goto advance;
+                    goto continue_loop;
 
                     // TODO [future work]: opportunity for ordered queue.
                     // Perhaps bump up this LC to the head of the queue so it
@@ -2385,8 +2385,10 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                     // TODO [future work]: this might be a bug. We shouldn't get
                     // here and have a readlen of 0.
                     log_printf(LOG_DEBUG, "cachefile_get_readlen: %llu\n", paylen);
+                    //assert(paylen > 0);
                     if (paylen == 0) {
-                        log_printf(LOG_DEBUG, "LC_DATA pending but no data to read.");
+                        log_printf(LOG_DEBUG,
+                            "LC_DATA pending but no data to read\n");
                     }
                     if (PKT_MAX_PAYLOAD_LEN < paylen) {
                         paylen = PKT_MAX_PAYLOAD_LEN;
@@ -2413,20 +2415,17 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         copy_to_obuf(&peer->obuf, (char *)(&hdr), sizeof(PktHdr));
                         copy_to_obuf(&peer->obuf, buf, paylen);
 
-                        if (out_of_space) {
-                            // re-enabled pollout
-                            //lc->pending_data[peer_id] = PEND_DATA;
+                        // Data remaining
+                        if (cachefile_get_readlen(f, peer_id) > 0) {
                             lc->pend_pkt.lc_data = true;
                         }
                         else {
-                            // don't disable pollout, in case another LC enabled it
-                            //lc->pending_data[peer_id] = PEND_NODATA;
                             lc->pend_pkt.lc_data = false;
                         }
                     }
                     else {
                         log_printf(LOG_DEBUG,
-                            "LC_DATA cancelled - payload len 0");
+                            "LC_DATA cancelled - payload len 0\n");
                     }
                 }
                 else {
@@ -2562,7 +2561,7 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         // At end of loop, lc_iter will be NULL
 
 
-advance:
+continue_loop:
 
         lc_iter = dict_iter_next(lc_iter);
         if (try_close_lc(state, lc, fdtype, e) < 0) {
