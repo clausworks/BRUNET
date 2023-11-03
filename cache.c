@@ -84,7 +84,7 @@ static void _move_act_hd_to_free(CacheFileHeader *f) {
     f->act_hd = new_act_hd;
 
 #ifdef __TEST
-    log_printf(LOG_DEBUG, "_mov_act_hd_to_free:\n");
+    printf("_mov_act_hd_to_free:\n");
     __print_ll("Free list", f, f->free_hd);
     __print_ll("Active list", f, f->act_hd);
 #endif
@@ -96,12 +96,21 @@ static void _move_act_hd_to_free(CacheFileHeader *f) {
  *
  * Returns: -1 on system error, -2 if max file size reached. ErrorStatus will be
  * updated accordingly.
+ *
+ * Important: this function modifies file->mmap_base. Ensure calling functions
+ * don't rely on an outdated copy of that pointer.
  */
 static int _cachefile_expand(OpenCacheFile *file, ErrorStatus *e) {
     int max_file_pages = ((1<<30) / _page_bytes);
     long long new_len;
     CacheFileHeader *new_base;
-    int num_new_blks = file->mmap_len / _page_bytes; // size will be doubled
+    int num_new_blks = file->mmap_len / _blk_bytes; // size will be doubled
+    
+#ifdef __TEST
+    printf("\n_cachefile_expand:\n");
+    __print_ll("Free list", file->mmap_base, file->mmap_base->free_hd);
+    __print_ll("Active list", file->mmap_base, file->mmap_base->act_hd);
+#endif
 
     // Max file size needs to be less than INT_MAX. This assumes off_t is the
     // same as int32_t, and size_t is the same as uint32_t. Otherwise, we could
@@ -132,13 +141,23 @@ static int _cachefile_expand(OpenCacheFile *file, ErrorStatus *e) {
         return -1;
     }
 
+#ifdef __TEST
+    printf("mmap_len: %lld->%lld\n", file->mmap_len, new_len);
+    printf("mmap_addr: %p->%p\n", file->mmap_base, new_base);
+#endif
+
     file->mmap_base = new_base;
     file->mmap_len = new_len;
 
     // Add new blocks to free list
-    for (int i = 0; i < num_new_blks; ++i) {
+    for (int i = num_new_blks; i < 2*num_new_blks; ++i) {
         _create_free_blk(file->mmap_base, i*_blk_bytes);
     }
+
+#ifdef __TEST
+    __print_ll("Free list", file->mmap_base, file->mmap_base->free_hd);
+    __print_ll("Active list", file->mmap_base, file->mmap_base->act_hd);
+#endif
 
     return 0;
 }
@@ -150,44 +169,43 @@ static int _cachefile_expand(OpenCacheFile *file, ErrorStatus *e) {
  * Returns: 0 on success, -1 on error (could not expand cache file)
  */
 static int _extend_active_list(OpenCacheFile *file, ErrorStatus *e) {
-    CacheFileHeader *f = file->mmap_base;
-    CacheFileBlock *blk_act_tl = _off_to_blk(f, f->act_tl);
     //CacheFileBlock *blk_free_hd;
     long long new_free_hd_off;
     long long new_blk_off;
     int status;
 
     // Out of free blocks. Extend file to make more.
-    if (f->free_hd == -1) {
+    if (file->mmap_base->free_hd == -1) {
         status = _cachefile_expand(file, e);
         if (status < 0) {
             return -1;
         }
     }
+    file->mmap_base = file->mmap_base; // update
 
     // DEBUG
-    assert(blk_act_tl->next == -1);
-    assert(f->free_hd != -1);
+    assert(_off_to_blk(file->mmap_base, file->mmap_base->act_tl)->next == -1);
+    assert(file->mmap_base->free_hd != -1);
 #ifdef __TEST
-    __print_ll("_extend_active_list (before)", f, f->act_hd);
+    __print_ll("_extend_active_list (before)", file->mmap_base, file->mmap_base->act_hd);
 #endif
 
     // Offsets: first two blocks in free list
-    new_blk_off = f->free_hd;
-    new_free_hd_off = _get_next_from_off(f, f->free_hd);
+    new_blk_off = file->mmap_base->free_hd;
+    new_free_hd_off = _get_next_from_off(file->mmap_base, file->mmap_base->free_hd);
 
     // Set new head, remove pointer to free from old head
-    f->free_hd = new_free_hd_off;
-    _set_next_from_off(f, new_blk_off, -1);
+    file->mmap_base->free_hd = new_free_hd_off;
+    _set_next_from_off(file->mmap_base, new_blk_off, -1);
 
     // Active list: update old tail to point to new block. Update record for tail.
-    _set_next_from_off(f, f->act_tl, new_blk_off);
-    f->act_tl = new_blk_off;
+    _set_next_from_off(file->mmap_base, file->mmap_base->act_tl, new_blk_off);
+    file->mmap_base->act_tl = new_blk_off;
 
 #ifdef __TEST
-    log_printf(LOG_DEBUG, "_extend_active_list");
-    __print_blk(f, new_blk_off);
-    __print_ll("_extend_active_list (after)", f, f->act_hd);
+    log_printf(LOG_DEBUG, "_extend_active_list\n");
+    __print_blk(file->mmap_base, new_blk_off);
+    __print_ll("_extend_active_list (after)", file->mmap_base, file->mmap_base->act_hd);
 #endif
 
     return 0;
@@ -264,7 +282,6 @@ static void _cachefile_init(CacheFileHeader *f,/* struct in_addr peers[],*/ int 
 int cachefile_write(OpenCacheFile *file, char *buf, int buflen,
     ErrorStatus *e) {
 
-    CacheFileHeader *f = file->mmap_base;
     char *write_head; // byte pointer for memcpy
     long long empty; // empty bytes in current block
     long long nbytes; // number of bytes to copy
@@ -279,8 +296,7 @@ int cachefile_write(OpenCacheFile *file, char *buf, int buflen,
         // We always write to the tail block. A new block is only appended (and
         // therefore becomes the new tail) after the current write block is
         // filled up.
-        write_head = _off_to_byteptr(f, f->write);
-        empty = f->act_tl + _blk_bytes - f->write; // 0 if at end of block
+        empty = file->mmap_base->act_tl + _blk_bytes - file->mmap_base->write; // 0 if at end of block
 
         // DEBUG
         assert(empty > 0 && empty <= _blk_bytes - sizeof(CacheFileBlock));
@@ -294,6 +310,7 @@ int cachefile_write(OpenCacheFile *file, char *buf, int buflen,
         else {
             nbytes = empty;
             status = _extend_active_list(file, e); // expands file if necessary
+            file->mmap_base = file->mmap_base; // update if it changed
             if (status < 0) {
                 return -1;
             }
@@ -301,23 +318,24 @@ int cachefile_write(OpenCacheFile *file, char *buf, int buflen,
 
         //hex_dump("cachefile_write: memcpy", buf + written, nbytes, 16);
 
+        write_head = _off_to_byteptr(file->mmap_base, file->mmap_base->write);
         memcpy(write_head, buf + written, nbytes);
-        f->write += nbytes;
+        file->mmap_base->write += nbytes;
         remaining -= nbytes; // if remaining < empty, remaining==0 -> loop exits
         written += nbytes;
 
         // Reached end of block, reposition write head at new tail item.
-        if (f->write % _blk_bytes == 0) {
-            f->write = f->act_tl + sizeof(CacheFileBlock);
+        if (file->mmap_base->write % _blk_bytes == 0) {
+            file->mmap_base->write = file->mmap_base->act_tl + sizeof(CacheFileBlock);
         }
     }
 
     //for (int i = 0; i < CF_MAX_DEVICES; ++i) {
-        //f->logical_readlen[i] += written;
+        //file->mmap_base->logical_readlen[i] += written;
     //}
     
     // Update logical value
-    f->logical_write += written;
+    file->mmap_base->logical_write += written;
 
     return 0;
 }
@@ -330,7 +348,6 @@ int cachefile_write(OpenCacheFile *file, char *buf, int buflen,
 int cachefile_read(OpenCacheFile *file, int peer_id, char *buf,
     int buflen, ErrorStatus *e) {
 
-    CacheFileHeader *f = file->mmap_base;
     char *read_head;
     long long buf_avail = buflen; // bytes available in buffer
     long long blk_avail;
@@ -343,28 +360,28 @@ int cachefile_read(OpenCacheFile *file, int peer_id, char *buf,
     assert(buflen > 0);
 
     // Find peer read offset from IP
-    assert(peer_id >= 0 && peer_id < f->n_peers);
+    assert(peer_id >= 0 && peer_id < file->mmap_base->n_peers);
     p = peer_id;
 
     // Loop until
     //   (a) no more space in read buffer
     //   (b) no more bytes to read
-    while (buf_avail > 0 && f->read[p] != f->write) {
+    while (buf_avail > 0 && file->mmap_base->read[p] != file->mmap_base->write) {
         // check for
         // - end of block
         // - write head
         // TODO: set max limit on read (less than signed int max)
-        read_head = _off_to_byteptr(f, f->read[p]); // for memcpy
-        blk_off = f->read[p] / _blk_bytes * _blk_bytes; // get base offset of current block
+        read_head = _off_to_byteptr(file->mmap_base, file->mmap_base->read[p]); // for memcpy
+        blk_off = file->mmap_base->read[p] / _blk_bytes * _blk_bytes; // get base offset of current block
         
         // Check for end of data in current block (write head)
-        if (blk_off / _blk_bytes == f->write / _blk_bytes) {
+        if (blk_off / _blk_bytes == file->mmap_base->write / _blk_bytes) {
             // Write head is in current block: get num bytes till write head
-            blk_avail = f->write - f->read[p]; 
+            blk_avail = file->mmap_base->write - file->mmap_base->read[p]; 
         }
         else {
             // Write head is not in current block: get num bytes till end of blk
-            blk_avail = (blk_off + _blk_bytes) - f->read[p];
+            blk_avail = (blk_off + _blk_bytes) - file->mmap_base->read[p];
         }
 
         if (buf_avail < blk_avail) {
@@ -377,111 +394,112 @@ int cachefile_read(OpenCacheFile *file, int peer_id, char *buf,
         memcpy(buf + total, read_head, nbytes);
 
         buf_avail -= nbytes;
-        f->read[p] += nbytes;
+        file->mmap_base->read[p] += nbytes;
         total += nbytes;
 
         // Reached end of block: jump over header
-        if (f->read[p] % _blk_bytes == 0) {
-            f->read[p] = _get_next_from_off(f, blk_off) + sizeof(CacheFileBlock);
+        if (file->mmap_base->read[p] % _blk_bytes == 0) {
+            file->mmap_base->read[p] = _get_next_from_off(file->mmap_base, blk_off) + sizeof(CacheFileBlock);
             // TODO: handle end-of-file case (reading last byte in max file size)
         }
     }
 
-    //f->logical_readlen[p] -= total;
-    //assert(f->logical_readlen[p] >= 0);
+    //file->mmap_base->logical_readlen[p] -= total;
+    //assert(file->mmap_base->logical_readlen[p] >= 0);
     
     // Update logical value
-    f->logical_read[p] += total;
+    file->mmap_base->logical_read[p] += total;
 
     return total;
 }
 
 void cachefile_ack(OpenCacheFile *file, long long n_acked) {
-    CacheFileHeader *f = file->mmap_base;
     long long remaining = n_acked; // bytes available in buffer
     long long blk_avail;
     long long blk_off, blk_off_new;
 
     // DEBUG
-    assert(f->ack != -1);
+    assert(file->mmap_base->ack != -1);
     assert(n_acked > 0);
 
-    // Loop until we get to block containing (f->ack + n_acked)
+    // Loop until we get to block containing (file->mmap_base->ack + n_acked)
     // As we advance pas the end of a block, move it to the freee list
     while (remaining > 0) {
         // check for end of block
-        blk_off = f->ack / _blk_bytes * _blk_bytes;
-        blk_off_new = (f->ack + remaining) / _blk_bytes * _blk_bytes;
+        blk_off = file->mmap_base->ack / _blk_bytes * _blk_bytes;
+        blk_off_new = (file->mmap_base->ack + remaining) / _blk_bytes * _blk_bytes;
 
-        assert(blk_off == f->act_hd);
+        assert(blk_off == file->mmap_base->act_hd);
         
         // Check for end of ackable data in current block
         if (blk_off / _blk_bytes == blk_off_new / _blk_bytes) {
-            f->ack += remaining;
+            file->mmap_base->ack += remaining;
             remaining = 0;
 
             /*// Update older read/logical_readlen entries
-            for (int p = 0; p < f->n_peers; ++p) {
+            for (int p = 0; p < file->mmap_base->n_peers; ++p) {
                 // Read head is in this block
-                if (f->read[p] / _blk_bytes == f->ack / _blk_bytes) {
-                    if (f->read[p] < f->ack) {
+                if (file->mmap_base->read[p] / _blk_bytes == file->mmap_base->ack / _blk_bytes) {
+                    if (file->mmap_base->read[p] < file->mmap_base->ack) {
                         // advance read head to ack position
-                        f->logical_readlen[p] -= f->ack - f->read[p];
-                        f->read[p] = f->ack; 
-                        assert(f->logical_readlen[p] >= 0);
+                        file->mmap_base->logical_readlen[p] -=
+                        file->mmap_base->ack - file->mmap_base->read[p];
+                        file->mmap_base->read[p] = file->mmap_base->ack; 
+                        assert(file->mmap_base->logical_readlen[p] >= 0);
                     }
                 }
             }*/
         }
         else {
             // End of ackable data is not in current block: get num bytes till end of blk
-            blk_avail = (blk_off + _blk_bytes) - f->ack;
-            f->ack += blk_avail;
+            blk_avail = (blk_off + _blk_bytes) - file->mmap_base->ack;
+            file->mmap_base->ack += blk_avail;
             remaining -= blk_avail;
             
             /*// Update older read/logical_readlen entries
-            for (int p = 0; p < f->n_peers; ++p) {
+            for (int p = 0; p < file->mmap_base->n_peers; ++p) {
                 // Read head is in this block
-                if (f->read[p] / _blk_bytes == (f->ack - 1) / _blk_bytes) {
-                    if (f->read[p] < f->ack) {
+                if (file->mmap_base->read[p] / _blk_bytes == (file->mmap_base->ack - 1) / _blk_bytes) {
+                    if (file->mmap_base->read[p] < file->mmap_base->ack) {
                         // advance read head to ack position
-                        f->logical_readlen[p] -= f->ack - f->read[p];
-                        f->read[p] = f->ack; 
-                        assert(f->logical_readlen[p] >= 0);
+                        file->mmap_base->logical_readlen[p] -=
+                        file->mmap_base->ack - file->mmap_base->read[p];
+                        file->mmap_base->read[p] = file->mmap_base->ack; 
+                        assert(file->mmap_base->logical_readlen[p] >= 0);
                     }
                 }
             }*/
         }
 
         // Reached end of block: jump over header
-        if (f->ack % _blk_bytes == 0) {
-            f->ack = _get_next_from_off(f, blk_off) + sizeof(CacheFileBlock);
+        if (file->mmap_base->ack % _blk_bytes == 0) {
+            file->mmap_base->ack = _get_next_from_off(file->mmap_base, blk_off) + sizeof(CacheFileBlock);
             // TODO: handle end-of-file case (acking last byte in max file size)
             // Free old block (still pointed to by blk_off)
-            _move_act_hd_to_free(f);
+            _move_act_hd_to_free(file->mmap_base);
 
             /*// Advance older read heads to next block 
-            for (int p = 0; p < f->n_peers; ++p) {
+            for (int p = 0; p < file->mmap_base->n_peers; ++p) {
                 // If a read head is at the beginning of a block, then it must
                 // have been set earlier in this function (a normal read
                 // operation would have advanced it past the header)
-                if (f->read[p] % _blk_bytes == 0) {
-                    f->read[p] = f->ack;
+                if (file->mmap_base->read[p] % _blk_bytes == 0) {
+                    file->mmap_base->read[p] = file->mmap_base->ack;
                 }
             }*/
         }
     }
 
     // Update logical value
-    f->logical_ack += n_acked;
+    file->mmap_base->logical_ack += n_acked;
 
     log_printf(LOG_DEBUG, "cachefile_ack: %lld bytes\n", n_acked);
 
     // Update read heads
-    for (int p = 0; p < f->n_peers; ++p) {
-        if (f->logical_read[p] < f->logical_ack) {
-            f->read[p] = f->ack;
-            f->logical_read[p] = f->logical_ack;
+    for (int p = 0; p < file->mmap_base->n_peers; ++p) {
+        if (file->mmap_base->logical_read[p] < file->mmap_base->logical_ack) {
+            file->mmap_base->read[p] = file->mmap_base->ack;
+            file->mmap_base->logical_read[p] = file->mmap_base->logical_ack;
         }
     }
 }
@@ -781,6 +799,7 @@ static int __test_caching_2() {
     char rbuf[256] = {0};
     int status;
     CacheFileHeader *f;
+    OpenCacheFile *file;
 
     printf("\n[__test_caching_2()]\n");
 
@@ -794,10 +813,11 @@ static int __test_caching_2() {
         return -1;
     }
 
+    file = &cache.fwd;
     f = cache.fwd.mmap_base;
 
     strcpy(wbuf, "Hello world");
-    status = cachefile_write(f, wbuf, strlen(wbuf), &e);
+    status = cachefile_write(file, wbuf, strlen(wbuf), &e);
     if (status < 0) {
         err_show(&e);
         return -1;
@@ -805,7 +825,7 @@ static int __test_caching_2() {
     __print_cfhdr(f);
     __print_blk(f, f->act_tl);
 
-    status = cachefile_read(f, 1, rbuf, 256, &e);
+    status = cachefile_read(file, 1, rbuf, 256, &e);
     hex_dump("read result", rbuf, 256, 16);
     if (status < 0) {
         err_show(&e);
@@ -827,6 +847,7 @@ static int __test_caching_3() {
     char rbuf[5001] = {0};
     int status;
     CacheFileHeader *f;
+    OpenCacheFile *file;
 
     printf("\n[__test_caching_3()]\n");
 
@@ -840,6 +861,7 @@ static int __test_caching_3() {
         return -1;
     }
 
+    file = &cache.fwd;
     f = cache.fwd.mmap_base;
 
     __print_ll("active", f, f->ack / _blk_bytes * _blk_bytes);
@@ -851,7 +873,7 @@ static int __test_caching_3() {
     for (int i = 0; i < 1000; ++i) wbuf[3000+i] = 'D';
     for (int i = 0; i < 1000; ++i) wbuf[4000+i] = 'E';
     hex_dump("wbuf", wbuf, 5000, 32);
-    status = cachefile_write(f, wbuf, 5000, &e);
+    status = cachefile_write(file, wbuf, 5000, &e);
     if (status < 0) {
         err_show(&e);
         return -1;
@@ -863,7 +885,7 @@ static int __test_caching_3() {
     __print_blk(f, f->act_tl);
     __print_blk_contents(f, f->act_tl);
 
-    status = cachefile_read(f, 1, rbuf, 5000, &e);
+    status = cachefile_read(file, 1, rbuf, 5000, &e);
     hex_dump("rbuf", rbuf, 5000, 32);
     if (status < 0) {
         err_show(&e);
@@ -891,7 +913,8 @@ static int __test_caching_4(int nbytes) {
     char wbuf[10000] = {0};
     char rbuf[10000] = {0};
     int status;
-    CacheFileHeader *f;
+    //CacheFileHeader *f;
+    OpenCacheFile *file;
 
     assert(nbytes <= 10000);
 
@@ -907,20 +930,21 @@ static int __test_caching_4(int nbytes) {
         return -1;
     }
 
-    f = cache.fwd.mmap_base;
+    file = &cache.fwd;
+    //f = cache.fwd.mmap_base;
 
     // setup
     memset(wbuf, 'a', nbytes);
 
     // write
-    status = cachefile_write(f, wbuf, nbytes, &e);
+    status = cachefile_write(file, wbuf, nbytes, &e);
     if (status < 0) {
         err_show(&e);
         return -1;
     }
 
     // read
-    status = cachefile_read(f, 1, rbuf, nbytes, &e);
+    status = cachefile_read(file, 1, rbuf, nbytes, &e);
     if (status < 0) {
         err_show(&e);
         return -1;
@@ -948,6 +972,7 @@ static int __test_caching_5(int nbytes) {
     char rbuf[10000] = {0};
     int status;
     CacheFileHeader *f;
+    OpenCacheFile *file;
 
     assert(nbytes <= 10000);
 
@@ -963,20 +988,21 @@ static int __test_caching_5(int nbytes) {
         return -1;
     }
 
+    file = &cache.fwd;
     f = cache.fwd.mmap_base;
 
     // setup
     memset(wbuf, 'a', nbytes);
 
     // write
-    status = cachefile_write(f, wbuf, nbytes, &e);
+    status = cachefile_write(file, wbuf, nbytes, &e);
     if (status < 0) {
         err_show(&e);
         return -1;
     }
 
     // read
-    status = cachefile_read(f, 1, rbuf, nbytes, &e);
+    status = cachefile_read(file, 1, rbuf, nbytes, &e);
     if (status < 0) {
         err_show(&e);
         return -1;
@@ -987,13 +1013,70 @@ static int __test_caching_5(int nbytes) {
 
     __print_cfhdr(f);
     for (int i = 0; i < nbytes; ++i) {
-        cachefile_ack(f, 1);
+        cachefile_ack(file, 1);
     }
     __print_cfhdr(f);
     
     cache_close(&cache, &e);
     return 0;
 }
+
+static int __test_caching_6() {
+    ErrorStatus e;
+    struct in_addr peers[CF_MAX_DEVICES];
+    int n_peers;
+    Cache cache;
+    LogConn lc1;
+    char wbuf[100000] = {0};
+    char rbuf[100000] = {0};
+    int status;
+    OpenCacheFile *file;
+    int nbytes = 1016 * 7;
+
+    assert(nbytes <= 100000);
+
+    printf("\n[__test_caching_6(%d)]\n", nbytes);
+
+    err_init(&e);
+
+    __lc_set_id(&lc1, 0, 0);
+    n_peers = 2;
+
+    if (cache_init(&cache, lc1.id, n_peers, &e) < 0) {
+        err_show(&e);
+        return -1;
+    }
+
+    file = &cache.fwd;
+
+    // setup
+    memset(wbuf, 'a', nbytes);
+
+    // write
+    status = cachefile_write(file, wbuf, nbytes, &e);
+    if (status < 0) {
+        err_show(&e);
+        return -1;
+    }
+
+    // read
+    status = cachefile_read(file, 1, rbuf, nbytes, &e);
+    if (status < 0) {
+        err_show(&e);
+        return -1;
+    }
+
+    // check
+    assert(memcmp(rbuf, wbuf, nbytes) == 0);
+
+    printf("ACK:\n");
+    cachefile_ack(file, nbytes);
+    __print_cfhdr(file->mmap_base);
+    
+    cache_close(&cache, &e);
+    return 0;
+}
+
 
 void __test_caching() {
     printf("[__test_caching]\n");
@@ -1014,7 +1097,8 @@ void __test_caching() {
     //__test_caching_5(1015);
     //__test_caching_5(1016);
     //__test_caching_5(1017);
-    __test_caching_5(7111);
+    //__test_caching_5(7111);
+    __test_caching_6();
 
     exit(EXIT_SUCCESS);
 }

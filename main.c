@@ -3109,6 +3109,7 @@ int main(int argc, char **argv) {
 #endif
 }
 
+/*
 #ifdef __TEST
 void __print_obuf(WriteBuf *obuf) {
     log_printf(LOG_DEBUG, "OBUF\n", peer->sock);
@@ -3130,5 +3131,5 @@ void __test_obuf() {
 
     ob
 }
-
 #endif
+*/

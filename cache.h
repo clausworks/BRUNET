@@ -5,8 +5,13 @@
 #include "error.h"
 
 #define CACHE_FNAME_SIZE 256
-#define CACHE_DEFAULT_PAGES 1024
 #define CACHE_BLK_PER_PAGE 4
+
+#ifndef __TEST
+    #define CACHE_DEFAULT_PAGES 1024
+#else
+    #define CACHE_DEFAULT_PAGES 1
+#endif
 
 
 // TODO: use peer array index to identify peer, not an IP address
