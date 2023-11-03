@@ -14,7 +14,7 @@ sigint_handler() {
 }
 
 for i in $(seq 1 $num_servers); do
-    p=$(($start_port+i))
+    p=$(($start_port + i - 1))
     echo "tcpserver ${addr} ${p} cat &"
     tcpserver ${addr} ${p} cat &
 done
