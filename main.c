@@ -2293,6 +2293,8 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                 }
                 else {
                     out_of_space = true;
+                    goto advance;
+
                     // TODO [future work]: opportunity for ordered queue.
                     // Perhaps bump up this LC to the head of the queue so it
                     // gets considered sooner.
@@ -2557,8 +2559,11 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
         //
         // We need to do this AFTER the iterator has advanced. Destroying the LC
         // frees the underlying memory.
-        
         // At end of loop, lc_iter will be NULL
+
+
+advance:
+
         lc_iter = dict_iter_next(lc_iter);
         if (try_close_lc(state, lc, fdtype, e) < 0) {
             return -1;
