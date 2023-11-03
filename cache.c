@@ -126,6 +126,10 @@ static int _cachefile_expand(OpenCacheFile *file, ErrorStatus *e) {
         exit(EXIT_FAILURE);
         return -2;
     }
+    else {
+        log_printf(LOG_INFO, "extending cache file (new size %lld bytes)\n",
+            new_len);
+    }
 
     // Resize underlying file
     if (ftruncate(file->fd, new_len) < 0) {

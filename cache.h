@@ -8,7 +8,7 @@
 #define CACHE_BLK_PER_PAGE 4
 
 #ifndef __TEST
-    #define CACHE_DEFAULT_PAGES 1024
+    #define CACHE_DEFAULT_PAGES 1
 #else
     #define CACHE_DEFAULT_PAGES 1
 #endif
