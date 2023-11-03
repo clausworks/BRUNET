@@ -522,6 +522,15 @@ static int lc_destroy(ConnectivityState *state, unsigned lc_id, ErrorStatus *e) 
         return -1;
     }
 
+    // TODO: make this LOG_DEBUG
+    log_printf(LOG_INFO, "State at close:\n");
+    log_printf(LOG_INFO, "    sent_eod: %d\n", lc->close_state.sent_eod);
+    log_printf(LOG_INFO, "    received_eod: %d\n", lc->close_state.received_eod);
+    log_printf(LOG_INFO, "    sent_no_wr: %d\n", lc->close_state.sent_no_wr);
+    log_printf(LOG_INFO, "    received_no_wr: %d\n", lc->close_state.received_no_wr);
+    log_printf(LOG_INFO, "    fin_wr: %d\n", lc->close_state.fin_wr);
+    log_printf(LOG_INFO, "    fin_rd: %d\n", lc->close_state.fin_rd);
+
     assert(lc->close_state.fin_wr && lc->close_state.fin_rd);
     assert(lc->close_state.received_no_wr || lc->close_state.sent_eod);
     assert(lc->close_state.sent_no_wr || lc->close_state.received_eod);
