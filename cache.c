@@ -127,7 +127,7 @@ static int _cachefile_expand(OpenCacheFile *file, ErrorStatus *e) {
         return -2;
     }
     else {
-        log_printf(LOG_INFO, "extending cache file (new size %lld bytes)\n",
+        log_printf(LOG_DEBUG, "Extending cache file (new size %lld bytes)\n",
             new_len);
     }
 
