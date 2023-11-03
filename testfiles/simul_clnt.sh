@@ -1,3 +1,7 @@
+if [ $# -ne 4 ]; then
+    echo "Args: addr port in_suffix num_conns"; exit 1
+fi
+
 addr=$1
 port=$2
 in_suffix=$3
