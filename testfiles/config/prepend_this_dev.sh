@@ -1,7 +1,11 @@
-letter=$1
-addr=$2
-echo $letter
+if [ $# -ne 2 ]; then
+    echo "Args: file_prefix this_dev_addr"; exit 1
+fi
+
+file_prefix=$1
+this_dev_addr=$2
+
 for file in *.yaml; do
-    newfile=_${letter}_${file}
-    printf "this_device: ${addr}\n\n" | cat - "$file" > "$newfile"
+    newfile=_${file_prefix}_${file}
+    printf "this_device: ${this_dev_addr}\n\n" | cat - "$file" > "$newfile"
 done
