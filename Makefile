@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -Werror -std=gnu99 -D_GNU_SOURCE
-TARGET=a.out
+TARGET=brunet
 LIBARGS=-lnftables -lfyaml
 
 TEST_TARGET=test
