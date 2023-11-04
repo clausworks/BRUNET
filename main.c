@@ -2949,13 +2949,13 @@ static int poll_once(ConnectivityState *state, struct pollfd fds[],
             ErrorStatus *e = &fd_errors[i];
             handled_fd = false;
 
-            if (fds[i].fd < 0) {
-                log_printf(LOG_DEBUG, "Skipping fd in poll: negative value\n");
+            // No event. Just skip this fd.
+            if (fds[i].revents == 0) {
                 continue;
             }
 
-            // No event. Just skip this fd.
-            if (fds[i].revents == 0) {
+            if (fds[i].fd < 0) {
+                log_printf(LOG_DEBUG, "Skipping fd in poll: negative value\n");
                 continue;
             }
 

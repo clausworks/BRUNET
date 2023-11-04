@@ -179,8 +179,8 @@ Show:   each clnt recvs correct data, diffs match
 THREE DEVICES
 -------------
 
-Given:  For each of the following config files, use simul_clnt.sh
-        (test[1-5]_5000000.in) to generate 5 clnts per LC.
+Given:  For each of the following config files, use adv_simul_clnt.sh w/ 5MB
+        (n_bytes = 5000000) to generate 5 clients per server.
 Show:   diffs all match
 
 [three1]
@@ -199,8 +199,41 @@ Config: 2_sp.yaml (B and C as servs, diff ports; A as clnt)
 Config: 3_circ.yaml (A-B clnt-serv; B-C as clnt-serv; C-A as clnt-serv)
 
 
-======================
-COMPLEX CONFIGURATIONS
-======================
-Note: each test should be performed while toggle_wlan0.sh is running (2s down,
-2s up). 
+=============
+LIMIT TESTING
+=============
+
+[limit1AB]
+Config: 1.yaml
+Given:  Use adv_simul_clnt.sh (5MB) to generate 16 clients. Use LOG_INFO.
+Show:   Program functions with maximum number of user clients.
+Repeat: with 500KB inputs & toggle_wlan0.sh
+Notes:  When running this using toggle_wlan0, I ran into two bugs that I could
+not reproduce easily. First, tcpserver reported "connection reset" for one of
+the clients midway through. Second (testing using LOG_DEBUG & 1MB files), the
+server proxy program aborted at assert in receive_peer_sync:
+    assert(peer_total_received >= peer->obuf.total_acked);
+
+[limit2AB]
+Config: 16_cp.yaml (16 servers on B, different ports)
+Given:  Use simul_serv.sh (500KB) to generate 16 servers. Generate one client
+        per server with adv_simul_server_p.sh.
+Show:   Program functions normally; diffs match
+Repeat: with toggle_wlan0.sh
+
+[limit3]
+Config: complex.yaml
+Commands (in order):
+        A$ bash toggle_wlan0.sh 5 2
+        C$ bash toggle_wlan0.sh 1 1
+        A$ tcpserver 10.0.0.1 13000 cat
+        B$ tcpserver 10.0.0.2 10000 cat
+        C$ tcpserver 10.0.0.3 10000 cat
+        C$ nc -l 12000
+        B$ nc 10.0.0.3 12000
+        A$ bash sporadic_simul_clnt.sh 10.0.0.2 10000 100000 5 -3
+        A$ bash sporadic_simul_clnt.sh 10.0.0.3 10000 100000 5 -3
+        A$ bash adv_simul_clnt.sh 10.0.0.3 10000 10000000 1
+        B$ bash adv_simul_clnt.sh 10.0.0.1 13000 10000000 1
+        (after completion, send 1 line each direction on nc servers, close clnt)
+
