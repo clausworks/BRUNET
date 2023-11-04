@@ -3065,8 +3065,8 @@ int main(int argc, char **argv) {
     return 0;
 #else
 
-    //set_global_log_level(LOG_DEBUG);
-    set_global_log_level(LOG_INFO);
+    set_global_log_level(LOG_DEBUG);
+    //set_global_log_level(LOG_INFO);
 
     init_sighandlers();
     cache_global_init();
