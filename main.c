@@ -26,9 +26,14 @@
 #include "util.h"
 
 
+static struct {
+    Dict *lc_dict;
+} _cleanup;
 
 void exit_cleanly() {
     rs_cleanup();
+    // TODO: delete .cache files (call lc_destroy)
+    dict_destroy(_cleanup.lc_dict);
     exit(0);
 }
 
@@ -73,6 +78,11 @@ void init_sighandlers() {
     }
     // For assert:
     if (0 != sigaction(SIGABRT, &sa, NULL)) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
+    // For parent session ending:
+    if (0 != sigaction(SIGHUP, &sa, NULL)) {
         perror("sigaction");
         exit(EXIT_FAILURE);
     }
@@ -997,6 +1007,8 @@ static int init_connectivity_state(ConnectivityState *state,
         return -1;
     }
 
+    _cleanup.lc_dict = state->log_conns; // for cleanup only
+
     return 0;
 }
 
@@ -1016,7 +1028,7 @@ static int create_reconnect_timer(ErrorStatus *e) {
         srand(time(NULL));
         seeded = true;
     }
-    nsec_offset = rand() % 10; // +/- 10ns
+    nsec_offset = rand() % 10; // +/- 5ns
     nsec_offset *= 1000; // us
     nsec_offset *= 1000; // ms
     nsec_offset *= 100; // tenths of a second
@@ -1624,8 +1636,7 @@ static int process_lc_new(ConnectivityState *state, struct pollfd fds[],
 
     memset(lc, 0, sizeof(LogConn));
 
-    assert(pkt_lc->id == hdr->lc_id);
-    lc->id = pkt_lc->id;
+    lc->id = hdr->lc_id;
     lc->clnt_id = pkt_lc->clnt_id;
     lc->serv_id = pkt_lc->serv_id;
     lc->serv_port = pkt_lc->serv_port;
@@ -2288,7 +2299,6 @@ static int send_packet(ConnectivityState *state, struct pollfd fds[],
                         .len = sizeof(LogConnPkt)
                     };
                     LogConnPkt payload = {
-                        .id = lc->id,
                         .clnt_id = lc->clnt_id,
                         .serv_id = lc->serv_id,
                         .serv_port = lc->serv_port
@@ -3075,6 +3085,8 @@ int main(int argc, char **argv) {
 
     init_sighandlers();
     cache_global_init();
+
+    printf("%u\n", sizeof(PktHdr));
 
     err_init(&e);
 

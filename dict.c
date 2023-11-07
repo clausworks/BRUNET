@@ -6,13 +6,36 @@
 #include "error.h"
 #include "dict.h"
 
+static unsigned _cyclic_shift(char b, int n_bits) {
+    for (int i = 0; i < n_bits; ++i) {
+        char topbit = b & 0x80;
+        topbit = topbit >> 7;
+        b = b << 1;
+        b = b | topbit;
+    }
+    return b;
+}
+
+/* Taken from Knuth, TAOCP, vol. 3, 2nd ed., pp. 516-519.
+ *
+ * XOR each byte with a cyclic shift. Then multiply by a value that is
+ * relatively prime to the word size.
+ */
 static unsigned _hash(Dict *d, unsigned key) {
     const unsigned LARGE_PRIME = 0xDA316A91;
     unsigned index;
-    char xor = 0xFF & key;
-    xor ^= 0xFF & (key >> 8);
-    xor ^= 0xFF & (key >> 16);
-    xor ^= 0xFF & (key >> 24);
+    char xor;
+    char b;
+
+    xor = (char)(0xFF & key);
+
+    b = (char)(0xFF & (key >> 8));
+    xor = xor ^ _cyclic_shift(b, 1);
+    b = (char)(0xFF & (key >> 16));
+    xor = xor ^ _cyclic_shift(b, 2);
+    b = (char)(0xFF & (key >> 24));
+    xor = xor ^ _cyclic_shift(b, 3);
+
     index = ((unsigned)xor) * LARGE_PRIME;
     return index % d->n_buckets;
 }
@@ -236,6 +259,9 @@ Dict *dict_create(ErrorStatus *e) {
 void dict_destroy(Dict *d) {
     DictNode *n, *old;
     bool freed_nodes;
+
+    printf("Freeing dict nodes\n");
+
     n = d->head_;
     if (n != NULL) {
         while (n->next != NULL) {

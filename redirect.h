@@ -64,12 +64,12 @@ typedef enum {
 /* Packet "within the system" carrying a payload
  */
 typedef struct {
-    uint8_t type; // one of 
-    uint64_t lc_id; // connection this packet belongs to
-    uint8_t dir; // direction, 0 = client-to-server, 1 = server-to-client
-    uint64_t off; // offset in bytes of payload in connection's byte stream
+    uint32_t lc_id; // connection this packet belongs to
     uint16_t len; // number of bytes in payload
-} PktHdr;
+    uint8_t type; // one of PktType enum
+    uint8_t dir; // direction, one of PktDirection enum
+    uint64_t off; // offset of stream packet refers to
+} __attribute__((__packed__)) PktHdr;
 
 //TODO: check whether 64-bit unsigned offset will cause any problems
 
@@ -158,7 +158,6 @@ typedef struct {
 } LogConn;
 
 typedef struct {
-    unsigned id;
     unsigned clnt_id;
     unsigned serv_id;
     in_port_t serv_port;
