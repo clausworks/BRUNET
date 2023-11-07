@@ -199,9 +199,9 @@ Config: 2_sp.yaml (B and C as servs, diff ports; A as clnt)
 Config: 3_circ.yaml (A-B clnt-serv; B-C as clnt-serv; C-A as clnt-serv)
 
 
-=============
-LIMIT TESTING
-=============
+======
+LIMITS
+======
 
 [limit1AB]
 Config: 1.yaml
@@ -237,3 +237,20 @@ Commands (in order):
         B$ bash adv_simul_clnt.sh 10.0.0.1 13000 10000000 1
         (after completion, send 1 line each direction on nc servers, close clnt)
 
+===========
+PERFORMANCE
+===========
+
+[perf1]
+Setup:   1.yaml, adv_simul_clnt.sh w/ 10MB inputs, 5 clients. Use time(1) and
+         echo server.
+Measure: real/user/sys time. Repeat 3 times with BRUNET, 3 times without.
+
+[perf2]
+Setup:   Same as [perf1], but with sporadic_simul_clnt.sh. Use 10KB, 5 clnts,
+         1ms delay
+Measure: Same as [perf1]
+
+[perf3]
+Setup:   Use nc to send one byte to the echo server (short.txt).
+Measure: Same as [perf1]
