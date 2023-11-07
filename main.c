@@ -3086,8 +3086,6 @@ int main(int argc, char **argv) {
     init_sighandlers();
     cache_global_init();
 
-    printf("%u\n", sizeof(PktHdr));
-
     err_init(&e);
 
     if (0 != read_config_file(argv[1], &config)) {
