@@ -1,4 +1,4 @@
-#define _GNU_SOURCE
+//#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,8 +54,8 @@ int rs_init_table(struct nft_ctx *nft) {
     return 0;
 }
 
-int rs_make_client_chain(struct nft_ctx *nft, Connection *conn) {
-    unsigned short dport_h = ntohs(conn->serv_port);
+int rs_make_client_chain(struct nft_ctx *nft, ManagedPair *pair) {
+    unsigned short dport_h = ntohs(pair->serv_port);
     int result;
     char *cmdbuf;
     char this_str[INET_ADDRSTRLEN];
@@ -66,7 +66,7 @@ int rs_make_client_chain(struct nft_ctx *nft, Connection *conn) {
 
     // FIXME: read this value from config file
     const unsigned short NAT_PORT = 4321;
-    // TODO: check that this doesn't conflict with `tcp dport`
+    // TODO: check that this doesn't conflict with `tcp dport`, set by user
 
     // Make chain
     result = nft_run_cmd_from_buffer(nft,
@@ -76,12 +76,12 @@ int rs_make_client_chain(struct nft_ctx *nft, Connection *conn) {
     if (result != 0) return -1;
 
     // Convert IP addresses to strings
-    if (NULL == inet_ntop(AF_INET, &(conn->clnt),
+    if (NULL == inet_ntop(AF_INET, &(pair->clnt),
             this_str, INET_ADDRSTRLEN)) {
         perror("inet_ntop");
         return -1;
     }
-    if (NULL == inet_ntop(AF_INET, &(conn->serv),
+    if (NULL == inet_ntop(AF_INET, &(pair->serv),
             other_str, INET_ADDRSTRLEN)) {
         perror("inet_ntop");
         return -1;
@@ -90,11 +90,12 @@ int rs_make_client_chain(struct nft_ctx *nft, Connection *conn) {
     // Allocate and initialize command buffer for rule
     asprintf(&cmdbuf, 
         "add rule ip " RS_TABLE_NAME " " RS_CLIENT_CHAIN_NAME " "
-        "ip daddr %s ip saddr %s tcp dport %hu dnat ip to %s:%hu",
+        //"ip daddr %s ip saddr %s tcp dport %hu dnat ip to %s:%hu",
+        "ip daddr %s ip saddr %s tcp dport %hu dnat ip to 127.0.0.1:%hu",
         other_str,
         this_str,
         dport_h,
-        this_str,
+        //this_str,
         NAT_PORT
         );
     result = nft_run_cmd_from_buffer(nft, cmdbuf);
@@ -104,8 +105,8 @@ int rs_make_client_chain(struct nft_ctx *nft, Connection *conn) {
     return 0;
 }
 
-int rs_make_server_chain(struct nft_ctx *nft, Connection *conn) {
-    unsigned short dport_h = ntohs(conn->serv_port);
+int rs_make_server_chain(struct nft_ctx *nft, ManagedPair *pair) {
+    unsigned short dport_h = ntohs(pair->serv_port);
     int result;
     char *cmdbuf;
     char this_str[INET_ADDRSTRLEN];
@@ -123,12 +124,12 @@ int rs_make_server_chain(struct nft_ctx *nft, Connection *conn) {
     if (result != 0) return -1;
 
     // Convert IP addresses to strings
-    if (NULL == inet_ntop(AF_INET, &(conn->serv),
+    if (NULL == inet_ntop(AF_INET, &(pair->serv),
             this_str, INET_ADDRSTRLEN)) {
         perror("inet_ntop");
         return -1;
     }
-    if (NULL == inet_ntop(AF_INET, &(conn->clnt),
+    if (NULL == inet_ntop(AF_INET, &(pair->clnt),
             other_str, INET_ADDRSTRLEN)) {
         perror("inet_ntop");
         return -1;
@@ -163,14 +164,14 @@ int rs_apply(ConfigFileParams *params) {
     // Make a rule for each connection
     // FIXME: make sure we're not re-making the chains for multiple
     // servers/clients
-    for (int i = 0; i < params->n_conn; ++i) {
+    for (int i = 0; i < params->n_pairs; ++i) {
 
         // This device is a client, server, or neither in the connection
-        if (params->conn[i].clnt.s_addr == params->this_dev.s_addr) {
-            rs_make_client_chain(nft, &(params->conn[i]));
+        if (params->pairs[i].clnt.s_addr == params->this_dev.s_addr) {
+            rs_make_client_chain(nft, &(params->pairs[i]));
         }
-        else if (params->conn[i].serv.s_addr == params->this_dev.s_addr) {
-            rs_make_server_chain(nft, &(params->conn[i]));
+        else if (params->pairs[i].serv.s_addr == params->this_dev.s_addr) {
+            rs_make_server_chain(nft, &(params->pairs[i]));
         }
     
     }
@@ -198,7 +199,7 @@ int rs_cleanup() {
 
     //printf("cleanup: AFTER ---------------------\n");
     //nft_run_cmd_from_buffer(nft, "list ruleset");
-    printf("cleanup");
+    printf("Cleaned up ruleset\n");
 
     nft_ctx_free(nft);
 

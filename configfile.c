@@ -179,7 +179,7 @@ int _read_ip(struct fy_document *fyd, const char *yaml_path, struct in_addr *res
 int _read_connections(struct fy_document *fyd, ConfigFileParams *params) {
     char fmt[CF_BUF_LEN];
     int i = 0;
-    Connection *cur_conn;
+    ManagedPair *cur_conn;
     unsigned short port_h;
     struct fy_node *fyn;
     int n_conn;
@@ -201,17 +201,17 @@ int _read_connections(struct fy_document *fyd, ConfigFileParams *params) {
 
     n_conn = fy_node_sequence_item_count(fyn);
     if (n_conn == -1 || n_conn == 0) {
-        fprintf(stderr, "Connection list is empty\n");
+        fprintf(stderr, "ManagedPair list is empty\n");
         return -1;
     }
-    else if (n_conn > CF_MAX_CONNECTIONS) {
-        fprintf(stderr, "Connections list too long (max %d)\n", CF_MAX_CONNECTIONS);
+    else if (n_conn > CF_MAX_PAIRS) {
+        fprintf(stderr, "ManagedPair list too long (max %d)\n", CF_MAX_PAIRS);
         return -1;
     }
-    params->n_conn = n_conn;
+    params->n_pairs = n_conn;
 
     for (i = 0; i < n_conn; i++) {
-        cur_conn = &(params->conn[i]);
+        cur_conn = &(params->pairs[i]);
 
         sprintf(fmt, "/connections/%d/client\n %%256s", i);
         if (_read_ip(fyd, fmt, &(cur_conn->clnt)) != 0) {

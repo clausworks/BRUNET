@@ -1,0 +1,256 @@
+=========================
+PROXY PROGRAM CONNECTIONS
+=========================
+
+General comment: 
+Manually verify operations succeed by reading output messages.
+
+Log level: LOG_DEBUG
+Config file: 1.yaml
+
+[proxy1AB]
+Given:  comms up; A up; B down
+Show:   reconnect repeat starts on A
+Repeat: swap A/B
+
+[proxy2AB]
+Given:  comms up; A up; wait for reconn repeat; B up
+Show:   reconnect repeat starts on A, then connects to B; sync succeeds
+Repeat: swap A/B
+
+[proxy3AB]
+Given:  comms up; A up; B up quickly
+Show:   B connects to A before reconnect sequence starts
+Repeat: swap A/B
+
+
+=================================
+CONNECTION ESTABLISHMENT/RECOVERY
+=================================
+
+General comment:
+Test that user program connections can connect and disconnect properly.
+
+Log level: LOG_DEBUG
+User programs:
+- clnt1 (interactive): nc ADDR PORT
+- clnt2 (send file): nc -q 0 ADDR PORT < INFILE > OUTFILE
+- serv1 (interactive, single client): nc -l PORT
+- serv2 (echo, multi client): tcpserver ADDR PORT cat
+
+ESTABLISHMENT
+-------------
+Config: 1.yaml
+
+[estab1]
+Given:  comms up; A & B up; serv1 down; clnt1 up
+Show:   A sends LC_NEW, B recvs & registers LC; B sends LC_EOD, LC_CLOSED_WR;
+        A recvs & closes conn to clnt1 immediately
+
+[estab2]
+Given:  comms up; A & B up; serv1 up; clnt1 up; kill clnt1
+Show:   A sends LC_NEW, B recvs; A sends LC_EOD; B recvs, closes
+        conn to serv1; B sends LC_EOD & LC_CLOSED_WR; A recvs LC_EOD, closes
+        conn to clnt1; A recvs LC_CLOSED_WR, ignores
+
+[estab3A]
+Given:  comms up; A & B up; serv1 up; clnt1 up; A sends 1B; B sends 1B;
+        kill clnt1
+Show:   A sends LC_NEW, B recvs; A sends LC_DATA, B recvs & sends LC_ACK;
+        B sends LC_DATA, A recvs & sends LC_ACK; A sends LC_EOD; B recvs, closes
+        conn to serv1; B sends LC_EOD & LC_CLOSED_WR; A recvs LC_EOD & closes
+        conn to clnt1; A ignores LC_CLOSED_WR
+
+[estab3B]
+Given:  comms up; A & B up; serv1 up; clnt1 up; B sends 1B; A sends 1B;
+        kill serv1; A sends 1B
+Show:   A sends LC_NEW, B recvs; B sends LC_DATA, A recvs & sends LC_ACK;
+        A sends LC_DATA, B recvs & sends LC_ACK; B sends LC_EOD; A recvs, does
+        not close conn to clnt1; after 1B sent, B sends LC_EOD & LC_CLOSED_WR,
+        closes conn to serv1; A recvs, closes conn to clnt1
+
+[estab4A]
+Given:  comms up; A & B up; serv2 up; clnt2 up, short.txt
+Show:   A sends LC_NEW, LC_DATA, LC_EOD; B sends LC_ACK, LC_EOD, LC_CLOSED_WR;
+        diff output & input
+
+[estab4B]
+Given:  same as [estab4A], but lorem.txt
+Show:   same as [estab4a]; ensure only one LC_DATA ea dir
+
+[estab4C]
+Given:  same as [estab4A], but bible.txt
+Show:   same as [estab4A]; ensure many LC_DATA ea dir
+
+
+RECOVERY
+--------
+Config: 1.yaml
+
+[recov1A]
+Given:  comms down; A & B up; serv1 down; clnt1 up; wait for reconn repeat;
+        comms up
+Show:   A & B connect after comms up; packets exchanged, same as in [estab1]
+
+[recov1B]
+Given:  A & B up; comms down; serv1 down; clnt1 up; wait for reconn repeat;
+        comms up
+Show:   A & B connect; sync occurs after reconnect; packets same as in [estab1]
+
+[recov2A]
+Given:  comms up; A & B up; comms down; serv1 up; clnt1 up; kill clnt1; comms up
+Show:   A & B connect; packets same as in [estab2]
+
+[recov2B]
+Given:  comms down; A & B up; serv1 up; clnt1 up; kill clnt1; comms up
+Show:   A & B connect after comms up; packets same as in [estab2]
+
+[recov3A]
+Given:  comms up; A & B up; serv2 up; clnt2 up, bible.txt; comms down during
+        transfer; comms up
+Show:   A & B connect; data transfer starts, stops, resumes, completes; close
+        succeeds; diff output & input
+
+[recov3B]
+Given:  comms down; A & B up; serv2 up; clnt2 up, bible.txt; comms up after
+        transfer
+Show:   A & B connect; all data from clnt2 cached; clnt2 hits EOF but does not
+        close; after comms up, transmission resumes and all data is echoed back
+        to clnt2 successfully; diff output & input
+
+[recov3C]
+Given:  comms up; A & B up; serv2 up; clnt2 up, bible.txt; until complete,
+        run toggle_wlan0, up 1s, down 3s
+Show:   A & B connect; A & B disconnect/reconnect several times during data
+        transmission; data transmission complete successfully
+
+
+========================
+MULTIPLE CLIENTS/SERVERS
+========================
+
+MULTIPLE CLIENTS
+----------------
+Config: 1.yaml
+
+[mclnt1ABC] 
+Given:  comms up; A & B up; serv2 up; seq_clnt.sh, short.txt, 2 clnts
+Show:   First LC closes before second starts; diff input/output successful
+Repeat: bible.txt, 5 clnts; 10 clnts, lorem_long.txt
+
+[mclnt2AB]
+Given:  comms up; A & B up; serv2 up; simul_clnt.sh, bible.txt, 2 clnts
+Show:   Second begins transmitting before first ends; diff input/ouput
+Repeat: 10 clnts
+
+MULTIPLE SERVERS
+----------------
+
+[mserv1ABCD]
+Config: 2_p.yaml (two servers on same host; different ports)
+Given:  serv1/clnt1 port 1234, serv2/clnt2 port 2345; use nc; serv1/2 up;
+        connect clnt1/serv1; send text clnt1->serv1, & reverse; kill clnt1;
+        repeat w/ serv2/clnt2
+Show:   data delivered to correct program; serv/clnt program closes as
+        appropriate
+Repeat: same but clnt2/serv2 first; clnt1/serv1 first, but kill serv1 first;
+        clnt2/serv2 first, but kill serv2 first
+Note:   keep proxy programs open; implicitly test sequential LCs
+
+[mserv1E]
+Config: 2_p.yaml (two servers on same host; different ports)
+Given:  serv1/clnt1 port 1234, serv2/clnt2 port 2345; use nc; serv1/2 up;
+        connect clnt1/serv1; connect clnt2/serv2; send text clnt1->serv1,
+        & reverse; send text clnt2->serv2, & reverse; kill serv1; kill serv2;
+Show:   data delivered to correct program; clnts close appropriately
+
+[mserv1F]
+Config: 2_p.yaml (two servers on same host; different ports)
+Given:  5 simultaneous clnts per serv (serv1: 1234, serv2: 2345); use
+        simul_clnt.sh (test[1-5]_5000000.in) for clnts, tcpserver for servs
+Show:   each clnt recvs correct data, diffs match
+
+[mserv2]
+Config: 2_cs.yaml (A as clnt & serv; B as serv & clnt)
+Given:  5 simultaneous clnts per serv; user simul_clnt.sh (test[1-5]_5000000.in)
+        for clnts, tcpserver for servs
+Show:   each clnt recvs correct data, diffs match
+
+THREE DEVICES
+-------------
+
+Given:  For each of the following config files, use adv_simul_clnt.sh w/ 5MB
+        (n_bytes = 5000000) to generate 5 clients per server.
+Show:   diffs all match
+
+[three1]
+Config: 2_c.yaml (B as serv; A and C as clnts)
+
+[three2]
+Config: 2_cp.yaml (B as serv, 2 ports; A and C as clnts)
+
+[three3]
+Config: 2_s.yaml (B and C as servs, same port; A as clnt)
+
+[three4]
+Config: 2_sp.yaml (B and C as servs, diff ports; A as clnt)
+
+[three5]
+Config: 3_circ.yaml (A-B clnt-serv; B-C as clnt-serv; C-A as clnt-serv)
+
+
+======
+LIMITS
+======
+
+[limit1AB]
+Config: 1.yaml
+Given:  Use adv_simul_clnt.sh (5MB) to generate 16 clients. Use LOG_INFO.
+Show:   Program functions with maximum number of user clients.
+Repeat: with 500KB inputs & toggle_wlan0.sh
+Notes:  When running this using toggle_wlan0, I ran into two bugs that I could
+not reproduce easily. First, tcpserver reported "connection reset" for one of
+the clients midway through. Second (testing using LOG_DEBUG & 1MB files), the
+server proxy program aborted at assert in receive_peer_sync:
+    assert(peer_total_received >= peer->obuf.total_acked);
+
+[limit2AB]
+Config: 16_cp.yaml (16 servers on B, different ports)
+Given:  Use simul_serv.sh (500KB) to generate 16 servers. Generate one client
+        per server with adv_simul_server_p.sh.
+Show:   Program functions normally; diffs match
+Repeat: with toggle_wlan0.sh
+
+[limit3]
+Config: complex.yaml
+Commands (in order):
+        A$ bash toggle_wlan0.sh 5 2
+        C$ bash toggle_wlan0.sh 1 1
+        A$ tcpserver 10.0.0.1 13000 cat
+        B$ tcpserver 10.0.0.2 10000 cat
+        C$ tcpserver 10.0.0.3 10000 cat
+        C$ nc -l 12000
+        B$ nc 10.0.0.3 12000
+        A$ bash sporadic_simul_clnt.sh 10.0.0.2 10000 100000 5 -3
+        A$ bash sporadic_simul_clnt.sh 10.0.0.3 10000 100000 5 -3
+        A$ bash adv_simul_clnt.sh 10.0.0.3 10000 10000000 1
+        B$ bash adv_simul_clnt.sh 10.0.0.1 13000 10000000 1
+        (after completion, send 1 line each direction on nc servers, close clnt)
+
+===========
+PERFORMANCE
+===========
+
+[perf1]
+Setup:   1.yaml, adv_simul_clnt.sh w/ 10MB inputs, 5 clients. Use time(1) and
+         echo server.
+Measure: real/user/sys time. Repeat 3 times with BRUNET, 3 times without.
+
+[perf2]
+Setup:   Same as [perf1], but with sporadic_simul_clnt.sh. Use 10KB, 5 clnts,
+         1ms delay
+Measure: Same as [perf1]
+
+[perf3]
+Setup:   Use nc to send one byte to the echo server (short.txt).
+Measure: Same as [perf1]
